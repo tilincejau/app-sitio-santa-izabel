@@ -128,21 +128,23 @@ async function jaTemIgual(fp) {
       e o servidor responde "duplicado" em vez de gravar de novo.
    3. Erro do servidor (ex.: horímetro menor) não apaga nada: o lançamento fica em "Envios" para corrigir ou descartar.
    4. Falha de rede ou instabilidade do Google: tenta de novo sozinho, sem marcar erro. */
-let sincronizando = false;
-async function sincronizar() {
+let sincronizando = false, ultimaAtualizacao = 0;
+async function sincronizar(forcarDados) {
   if (sincronizando || !navigator.onLine) return;
   sincronizando = true;
+  let enviou = false;
   try {
     const fila = (await DB.todos()).filter(i => i.status !== 'erro').sort((a, b) => a.criado - b.criado);
     for (const item of fila) {
       let r;
       try { r = await api({ ...item.payload, usuario: 'app' }); } catch (e) { break; }   // sem sinal ou resposta ruim: tenta depois
-      if (r.sucesso) { lembrarEnviado(item); await DB.del(item.id_transacao); }
+      if (r.sucesso) { lembrarEnviado(item); await DB.del(item.id_transacao); enviou = true; }
       else if (r.codigo === 'AUTH') { toast('A chave do app não confere com o backend.', 'erro'); break; }
       else if (r.codigo === 'TEMP') break;
       else { item.status = 'erro'; item.erro = r.erro || 'Erro desconhecido'; await DB.put(item); }
     }
-    await atualizarDados();
+    // A lista de produtos/estoque pesa no Google (abre várias planilhas): só atualiza depois de enviar algo, ao abrir o app ou a cada 10 min.
+    if (enviou || forcarDados === true || Date.now() - ultimaAtualizacao > 10 * 60 * 1000) await atualizarDados();
   } finally { sincronizando = false; await renderStatus(); }
 }
 
@@ -150,7 +152,7 @@ async function atualizarDados() {
   try {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
-    if (r.sucesso) { S.dados = r; localStorage.setItem('sitio_dados', JSON.stringify(r)); montarMenu(); }
+    if (r.sucesso) { S.dados = r; ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(r)); montarMenu(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
@@ -178,7 +180,7 @@ function irMenu() { mostrar('tela-menu'); renderStatus(); }
 function iniciarApp() {
   try { const c = JSON.parse(localStorage.getItem('sitio_dados')); if (c) S.dados = c; } catch (e) {}
   montarMenu(); irMenu();
-  sincronizar();
+  sincronizar(true);
 }
 
 /* =========================================================
@@ -652,9 +654,9 @@ async function abrirPendencias() {
 document.addEventListener('DOMContentLoaded', () => {
   $('#status-sync').onclick = abrirPendencias;
   document.querySelectorAll('[data-voltar]').forEach(b => b.onclick = irMenu);
-  window.addEventListener('online', sincronizar); window.addEventListener('offline', renderStatus);
+  window.addEventListener('online', () => sincronizar()); window.addEventListener('offline', renderStatus);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
-  setInterval(sincronizar, 20000);
+  setInterval(() => sincronizar(), 20000);
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});   // permite abrir o app sem internet
   iniciarApp();
