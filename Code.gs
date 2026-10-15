@@ -5,15 +5,41 @@
    ========================================================= */
 
 const CFG = {
+  // Planilha "geral": Listas, _envios e _erros
   SPREADSHEET_ID: '1hVGUdFfvP-SBlj0XWaJnSsKChrrjoJLzicCo068roC8',
-  PASTA_ASSINATURAS: 'COLE_AQUI_ID_DA_PASTA_ASSINATURAS',
-  PASTA_NOTAS: 'COLE_AQUI_ID_DA_PASTA_NOTAS_FISCAIS',
-  TZ: 'America/Sao_Paulo'
+  PASTA_NOTAS: '1xrENQIucOVkrwdIN1c9r7lvznxCP1zzJ',   // fotos das notas fiscais do estoque
+  TZ: 'America/Sao_Paulo',
+  // Sem usuário/senha. Esta chave só barra acessos aleatórios (ela fica visível no código do app, então não é segurança forte).
+  // Se mudar aqui, mude igual no script.js.
+  CHAVE: 'sitio-santa-izabel-2026'
 };
 
-// Opcional: um tópico em outra planilha. Ex.: { hidrometro: 'ID_DA_OUTRA_PLANILHA' }
-// Vazio = tudo na planilha principal acima.
-const PLANILHAS = {};
+// Uma planilha por tópico. O que não estiver aqui usa a planilha geral acima.
+const PLANILHAS = {
+  hidrometro:     '1uJBQdA27-pAJUZSEuad0ZXSv2nGnGRjcpTF3ixKTZtk',
+  irrigacao:      '1GNfdJ6Ch0kE2lDuq-gU6amFaQbmH19Hp-NpDV0AZx3Q',
+  pluviometro:    '1rtHbRDxE3i2Wypv05n-HJbb_1_rpDF_oNCXqVeLyHEg',
+  hidrorepelente: '148mzcaarU-Oi_6yBBWfYwOyxJp_aOn8CHuY5lYzmPdM',
+  abastecimento:  '1gpTihej4oY4JVV8_Sho_cIO8PDtKj5h0FQSQi5BWdC8',
+  diesel:         '1gpTihej4oY4JVV8_Sho_cIO8PDtKj5h0FQSQi5BWdC8',   // diesel e abastecimento ficam juntos
+  limpeza_local:  '17dcpru5zzR8QdkyFNjeUDksLVuGw7rwQAn5jta-9pVA',
+  limpeza_equip:  '1UMpypPYSqL9ytNNx_kbXWzT4lJDCP1ypLfLnTCqIiUU',
+  aplicacao:      '17FHQLjF5vgrm3BAH8Mt-Cm7nWrbgN7SrzsOL1VqFXAQ',   // aplicações, produtos_Aplicados e cadastro_produtos
+  estoque:        '17FHQLjF5vgrm3BAH8Mt-Cm7nWrbgN7SrzsOL1VqFXAQ'    // estoque_usado, controle_estoque e entradas_estoque
+};
+
+// Pasta das assinaturas de cada tópico (chave = nome da aba)
+const PASTAS_ASSINATURAS = {
+  'abastecimento':        '1QP6ohEFe6_zYBjaXfIFMwvzC_Vxi7dnd',
+  'aplicações':           '1LOjiiKrz_httZZgKhCX9fg7xbiULsCxr',
+  'estoque_diesel':       '1KeZ7Zyoy-WDk3eaaaSGVv9wsYlHYCkd0',
+  'hidrômetro':           '1eIjpt8Yf0jSpVmkHruoNfdjPp7GdyA3h',
+  'hidrorepelente':       '1nlq55pKWza8gTQbS3hu66qHeXn6avlwn',
+  'irrigação':            '1SF2C-6p_dp8QUM-m0d54KP0stBCwEfNb',
+  'limpeza_equipamentos': '1faPhz_Lq9ilnXNZmFCWlY0WmkDqzS4we',
+  'pluviômetro':          '16h8Lp6Iez-Za2biAEhuHTfRh31ptuLYZ',
+  'limpeza_local':        '1zSyLjhEqH4lOkpqpBu3nYiMgDia6Gw62'
+};
 
 const MAQ_MANUAL = ['TR05', 'TR10'];   // horímetro inicial digitado à mão
 const ENTRADAS_HDR = ['ID', 'DATA', 'PRODUTO_ID', 'PRODUTO', 'QUANTIDADE', 'UNIDADE', 'NF_NUMERO', 'FOTO_NOTA', 'STATUS', 'RESPONSAVEL', 'REGISTRADO_POR'];
@@ -46,7 +72,7 @@ function doGet(e) {
   return responder(function () {
     const p = e.parameter || {};
     if (p.acao === 'ping') return { sucesso: true };
-    exigirToken(p.usuario, p.token);
+    exigirChave(p.chave);
     if (p.acao === 'dados') return buscarDados();
     throw new Error('Ação inválida');
   });
@@ -55,8 +81,7 @@ function doGet(e) {
 function doPost(e) {
   return responder(function () {
     const d = JSON.parse(e.postData.contents);
-    if (d.acao === 'login') return login(d);
-    exigirToken(d.usuario, d.token);
+    exigirChave(d.chave);
     const lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try { return roteador(d); } finally { lock.releaseLock(); }
@@ -68,31 +93,16 @@ function responder(fn) {
   try { r = fn(); }
   catch (err) {
     const m = String(err && err.message || err);
-    r = m === 'AUTH' ? { sucesso: false, codigo: 'AUTH', erro: 'Sessão expirada. Entre novamente.' } : { sucesso: false, erro: m };
+    if (m === 'AUTH') r = { sucesso: false, codigo: 'AUTH', erro: 'Chave do app não confere.' };
+    // problemas passageiros do Google (fila, cota, tempo): o app tenta de novo sozinho, sem marcar como erro
+    else if (/lock|bloque|timed? ?out|tempo|quota|cota|too many|Service invoked|Try again|tente novamente|unavailable|indispon/i.test(m)) r = { sucesso: false, codigo: 'TEMP', erro: m };
+    else r = { sucesso: false, erro: m };
   }
   return ContentService.createTextOutput(JSON.stringify(r)).setMimeType(ContentService.MimeType.JSON);
 }
 
-/* ---------- login ---------- */
-function segredo() {
-  const p = PropertiesService.getScriptProperties();
-  let s = p.getProperty('SEGREDO');
-  if (!s) { s = Utilities.getUuid() + Utilities.getUuid(); p.setProperty('SEGREDO', s); }
-  return s;
-}
-function gerarToken(u) {
-  return Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(String(u).toLowerCase().trim(), segredo()));
-}
-function exigirToken(u, t) { if (!u || !t || gerarToken(u) !== t) throw new Error('AUTH'); }
-
-function login(d) {
-  const sh = aba('Usuarios', 'geral');
-  if (!sh) throw new Error("Crie a aba 'Usuarios' na planilha (colunas: usuario | senha).");
-  const u = String(d.usuario || '').trim().toLowerCase(), s = String(d.senha || '').trim();
-  const ok = valores(sh).some(function (r) { return String(r[0]).trim().toLowerCase() === u && String(r[1]).trim() === s; });
-  if (!ok) return { sucesso: false, erro: 'Usuário ou senha incorretos.' };
-  return { sucesso: true, token: gerarToken(u), usuario: u };
-}
+/* ---------- acesso ---------- */
+function exigirChave(c) { if (c !== CFG.CHAVE) throw new Error('AUTH'); }
 
 /* ---------- utilidades de planilha ---------- */
 const _ss = {};
@@ -150,11 +160,16 @@ function uid8() { return Utilities.getUuid().split('-')[0]; }
 function iso(d) { return d ? Utilities.formatDate(d, CFG.TZ, "yyyy-MM-dd'T'HH:mm") : ''; }
 
 /* ---------- arquivos ---------- */
+function pastaAssinatura(abaNome) {
+  const id = PASTAS_ASSINATURAS[abaNome];
+  if (!id) throw new Error("Sem pasta de assinaturas para '" + abaNome + "'");
+  return id;
+}
 function salvarAssinatura(b64, abaNome, base) {
   if (!b64) return '';
   const nome = base + '.ASSINATURA.' + Utilities.formatDate(new Date(), CFG.TZ, 'HHmmss') + '.png';
   const bytes = Utilities.base64Decode(String(b64).split(',')[1] || b64);
-  DriveApp.getFolderById(CFG.PASTA_ASSINATURAS).createFile(Utilities.newBlob(bytes, 'image/png', nome));
+  DriveApp.getFolderById(pastaAssinatura(abaNome)).createFile(Utilities.newBlob(bytes, 'image/png', nome));
   return abaNome + '_Images/' + nome;   // mesmo padrão do AppSheet: os laudos procuram pelo nome do arquivo
 }
 function salvarFoto(b64, nome) {
@@ -178,10 +193,9 @@ function jaProcessado(id) {
   if (!id) return false;
   const sh = aba('_envios', 'geral', ['ID', 'DATA', 'ACAO', 'USUARIO']), n = sh.getLastRow();
   if (n < 2) return false;
-  const ini = Math.max(2, n - 499);
-  return sh.getRange(ini, 1, n - ini + 1, 1).getValues().some(function (r) { return r[0] === id; });
+  return sh.getRange(2, 1, n - 1, 1).createTextFinder(String(id)).matchEntireCell(true).findNext() !== null;
 }
-function registrar(d) { aba('_envios', 'geral', ['ID', 'DATA', 'ACAO', 'USUARIO']).appendRow([d.id_transacao, new Date(), d.modulo || d.acao, d.usuario]); }
+function registrar(d) { aba('_envios', 'geral', ['ID', 'DATA', 'ACAO', 'USUARIO']).appendRow([d.id_transacao, new Date(), d.modulo || d.acao, d.usuario || 'app']); }
 
 function agendarLaudos(lista) {
   if (!lista || !lista.length) return;
