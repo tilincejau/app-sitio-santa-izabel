@@ -7,6 +7,8 @@
 
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
+const CHAVE = 'sitio-santa-izabel-2026';   // igual à CFG.CHAVE do Code.gs
+
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
 const UNID = ['L', 'KG', 'ML', 'G'];
 const MAQ_MANUAL = ['TR05', 'TR10'];
@@ -46,7 +48,6 @@ function toast(msg, tipo) {
 
 /* ---------- estado e armazenamento ---------- */
 const S = {
-  usuario: null, token: null,
   dados: { produtos: [], classes: [], listas: {}, estado: { hidro: {}, hidrorep: {}, abast: {} }, ultimos: {}, estoque: [], entradasSemNota: [] }
 };
 
@@ -68,27 +69,55 @@ const DB = (() => {
   return { put: o => tx('readwrite', s => s.put(o)), del: k => tx('readwrite', s => s.delete(k)), todos: () => tx('readonly', s => s.getAll()) };
 })();
 
-async function api(body) {
-  const r = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
-  return r.json();
+// Todo pedido tem prazo. Sem isso, um sinal que "pendura" deixaria o envio travado para sempre.
+async function fetchJSON(url, opts) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 90000);
+  try { const r = await fetch(url, { ...opts, signal: ctl.signal }); return await r.json(); }
+  finally { clearTimeout(t); }
 }
-async function apiGet(params) {
-  const r = await fetch(API_URL + '?' + new URLSearchParams(params));
-  return r.json();
+const api = body => fetchJSON(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, chave: CHAVE }) });
+const apiGet = params => fetchJSON(API_URL + '?' + new URLSearchParams({ ...params, chave: CHAVE }));
+
+/* ---------- guardar no aparelho ---------- */
+async function guardar(item) {
+  try { await DB.put(item); return true; }
+  catch (e) { toast('Não consegui guardar no aparelho. Não saia da tela e tente de novo.', 'erro'); return false; }
+}
+const lerEnviados = () => { try { return JSON.parse(localStorage.getItem('sitio_enviados')) || []; } catch (e) { return []; } };
+function lembrarEnviado(item) {
+  const l = lerEnviados(); l.unshift({ titulo: item.titulo, criado: item.criado, enviado: Date.now(), fp: item.fp });
+  try { localStorage.setItem('sitio_enviados', JSON.stringify(l.slice(0, 60))); } catch (e) {}
+}
+// "impressão digital" do lançamento (sem hora, assinatura e foto) para avisar quando alguém salva o mesmo duas vezes
+function impressao(modulo, dados) {
+  const txt = modulo + JSON.stringify(dados, (k, v) => (k === 'assinatura' || k === 'foto' || k === 'datahora' || k.startsWith('__')) ? undefined : v);
+  let h = 5381; for (let i = 0; i < txt.length; i++) h = ((h << 5) + h + txt.charCodeAt(i)) | 0;
+  return modulo + ':' + h;
+}
+async function jaTemIgual(fp) {
+  if ((await DB.todos()).some(i => i.fp === fp && i.status !== 'erro')) return true;
+  return lerEnviados().some(e => e.fp === fp && Date.now() - e.enviado < 15 * 60 * 1000);
 }
 
-/* ---------- sincronização ---------- */
+/* ---------- sincronização ----------
+   Regras que garantem que nada se perde nem duplica:
+   1. O lançamento só sai do aparelho depois que o servidor responde "sucesso".
+   2. Cada lançamento tem um ID único. Se a resposta se perder no caminho, o reenvio usa o mesmo ID
+      e o servidor responde "duplicado" em vez de gravar de novo.
+   3. Erro do servidor (ex.: horímetro menor) não apaga nada: o lançamento fica em "Envios" para corrigir ou descartar.
+   4. Falha de rede ou instabilidade do Google: tenta de novo sozinho, sem marcar erro. */
 let sincronizando = false;
 async function sincronizar() {
-  if (sincronizando || !navigator.onLine || !S.token) return;
+  if (sincronizando || !navigator.onLine) return;
   sincronizando = true;
   try {
     const fila = (await DB.todos()).filter(i => i.status !== 'erro').sort((a, b) => a.criado - b.criado);
     for (const item of fila) {
       let r;
-      try { r = await api({ ...item.payload, usuario: S.usuario, token: S.token }); } catch (e) { break; }   // sem sinal: tenta depois
-      if (r.sucesso) await DB.del(item.id_transacao);
-      else if (r.codigo === 'AUTH') { sair(); break; }
+      try { r = await api({ ...item.payload, usuario: 'app' }); } catch (e) { break; }   // sem sinal ou resposta ruim: tenta depois
+      if (r.sucesso) { lembrarEnviado(item); await DB.del(item.id_transacao); }
+      else if (r.codigo === 'AUTH') { toast('A chave do app não confere com o backend.', 'erro'); break; }
+      else if (r.codigo === 'TEMP') break;
       else { item.status = 'erro'; item.erro = r.erro || 'Erro desconhecido'; await DB.put(item); }
     }
     await atualizarDados();
@@ -97,18 +126,18 @@ async function sincronizar() {
 
 async function atualizarDados() {
   try {
-    const r = await apiGet({ acao: 'dados', usuario: S.usuario, token: S.token });
-    if (r.codigo === 'AUTH') return sair();
+    if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
+    const r = await apiGet({ acao: 'dados' });
     if (r.sucesso) { S.dados = r; localStorage.setItem('sitio_dados', JSON.stringify(r)); }
-  } catch (e) { /* offline: usa o que já está guardado */ }
+  } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
 async function renderStatus() {
   const b = $('#status-sync'); if (!b) return;
   const todos = await DB.todos(), erros = todos.filter(i => i.status === 'erro').length, esperando = todos.length - erros;
-  if (erros) { b.className = 'pill erro'; b.textContent = `${erros} envio(s) com erro — toque para ver`; }
-  else if (esperando) { b.className = 'pill aviso'; b.textContent = navigator.onLine ? `Enviando ${esperando} lançamento(s)…` : `${esperando} lançamento(s) guardados — aguardando sinal`; }
-  else { b.className = 'pill ok'; b.replaceChildren(el('i', { class: 'ph-fill ph-check-circle' }), navigator.onLine ? ' Tudo enviado' : ' Tudo enviado (sem sinal agora)'); }
+  if (erros) { b.className = 'pill erro'; b.textContent = `${erros} lançamento(s) com erro — toque para ver`; }
+  else if (esperando) { b.className = 'pill aviso'; b.textContent = navigator.onLine ? `Enviando ${esperando} lançamento(s)…` : `${esperando} guardado(s) no celular. Ainda NÃO enviado(s) — envia sozinho quando tiver internet`; }
+  else { b.className = 'pill ok'; b.replaceChildren(el('i', { class: 'ph-fill ph-check-circle' }), ' Tudo enviado'); }
 }
 
 /* ---------- telas ---------- */
@@ -118,29 +147,7 @@ function mostrar(id) {
 }
 function irMenu() { mostrar('tela-menu'); renderStatus(); }
 
-async function entrar() {
-  const u = $('#login-usuario').value.trim(), s = $('#login-senha').value, erro = $('#login-erro'), btn = $('#btn-login');
-  erro.hidden = true;
-  if (!u || !s) { erro.textContent = 'Preencha usuário e senha.'; erro.hidden = false; return; }
-  btn.disabled = true; btn.textContent = 'Entrando…';
-  try {
-    const r = await api({ acao: 'login', usuario: u, senha: s });
-    if (!r.sucesso) throw new Error(r.erro);
-    S.usuario = r.usuario; S.token = r.token;
-    localStorage.setItem('sitio_sessao', JSON.stringify({ u: S.usuario, t: S.token }));
-    $('#login-senha').value = '';
-    await iniciarApp();
-  } catch (e) { erro.textContent = e.message === 'Failed to fetch' ? 'Sem conexão. Para o primeiro acesso é preciso internet.' : e.message; erro.hidden = false; }
-  btn.disabled = false; btn.textContent = 'Entrar';
-}
-
-function sair() {
-  localStorage.removeItem('sitio_sessao'); S.usuario = S.token = null;
-  mostrar('tela-login');
-}
-
-async function iniciarApp() {
-  $('#usuario-nome').textContent = S.usuario;
+function iniciarApp() {
   try { const c = JSON.parse(localStorage.getItem('sitio_dados')); if (c) S.dados = c; } catch (e) {}
   montarMenu(); irMenu();
   sincronizar();
@@ -506,12 +513,14 @@ function montarForm(m, container, onSalvo) {
     for (const c of ctx.checks) { const e = c.fn(); if (e) { msg = e; c.w.classList.add('erro'); c.w.scrollIntoView({ block: 'center', behavior: 'smooth' }); break; } }
     if (!msg && m.validar) msg = m.validar(ctx.V) || null;
     if (msg) return toast(msg, 'erro');
+    const fp = impressao(m.id, ctx.V);
+    if (await jaTemIgual(fp) && !confirm('Já existe um lançamento igual a este, salvo há pouco. Salvar mesmo assim?')) return;
     btn.disabled = true;
     const id = uid();
     const payload = { acao: 'salvar', modulo: m.id, id_transacao: id, dados: JSON.parse(JSON.stringify(ctx.V)), novasListas: ctx.persist.map(f => f()).filter(Boolean) };
-    await DB.put({ id_transacao: id, payload, criado: Date.now(), titulo: m.nome });
+    if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: m.nome, fp }))) { btn.disabled = false; return; }
     (payload.novasListas).forEach(n => { const l = S.dados.listas[n.lista] = S.dados.listas[n.lista] || []; if (!l.includes(n.valor)) l.push(n.valor); });
-    toast('Salvo no aparelho ✔');
+    toast('Guardado no celular ✔ Envia sozinho quando tiver internet');
     onSalvo(); sincronizar();
   };
   container.append(btn);
@@ -567,7 +576,7 @@ function renderPosicao(root) {
         el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, onchange: async ev => {
           const arq = ev.target.files[0]; if (!arq) return;
           const id = uid(), foto = await comprimir(arq);
-          await DB.put({ id_transacao: id, payload: { acao: 'estoque_anexar_nota', id_transacao: id, id_entrada: e.id, foto }, criado: Date.now(), titulo: 'Nota de ' + e.produto });
+          if (!(await guardar({ id_transacao: id, payload: { acao: 'estoque_anexar_nota', id_transacao: id, id_entrada: e.id, foto }, criado: Date.now(), titulo: 'Nota de ' + e.produto }))) return;
           S.dados.entradasSemNota = sem.filter(x => x.id !== e.id); toast('Foto guardada ✔'); renderPosicao(root); sincronizar();
         } })))));
   }
@@ -586,34 +595,38 @@ function renderPosicao(root) {
   root.append(el('p', { class: 'sub' }, 'Saldo = última contagem + entradas − o que foi usado nas aplicações desde então. Valor em vermelho: usado mais do que entrou; falta registrar uma entrada ou contagem.'));
 }
 
-/* ---------- envios pendentes ---------- */
+/* ---------- envios ---------- */
 async function abrirPendencias() {
   mostrar('tela-pendencias');
   const root = $('#pendencias-root'); root.replaceChildren();
   const todos = (await DB.todos()).sort((a, b) => a.criado - b.criado);
-  if (!todos.length) { root.append(el('p', {}, 'Nenhum envio pendente. Tudo está na planilha.')); return; }
+  const esperando = todos.filter(i => i.status !== 'erro');
+  root.append(el('p', { class: 'sub' }, 'Tudo o que você salva fica guardado no celular. Só sai daqui depois que a planilha confirma o recebimento.'));
+  if (esperando.length) root.append(el('button', { class: 'btn', onclick: async () => { toast(navigator.onLine ? 'Enviando…' : 'Sem internet agora'); await sincronizar(); abrirPendencias(); } }, `Enviar agora (${esperando.length})`));
   todos.forEach(i => {
     const c = el('div', { class: 'cartao' + (i.status === 'erro' ? ' erro' : '') }, el('strong', {}, i.titulo || 'Lançamento'),
       el('span', { class: 'sub', style: 'display:block' }, new Date(i.criado).toLocaleString('pt-BR')),
-      i.status === 'erro' ? el('p', { class: 'erro-msg' }, i.erro) : el('p', { class: 'sub' }, 'Aguardando envio…'));
+      i.status === 'erro' ? el('p', { class: 'erro-msg' }, i.erro) : el('p', { class: 'sub' }, 'Guardado no celular, aguardando envio.'));
     if (i.status === 'erro') {
-      c.append(el('button', { class: 'btn sec mini', onclick: async () => { delete i.status; delete i.erro; await DB.put(i); sincronizar(); abrirPendencias(); } }, 'Tentar de novo'),
+      c.append(el('button', { class: 'btn sec mini', onclick: async () => { delete i.status; delete i.erro; await DB.put(i); await sincronizar(); abrirPendencias(); } }, 'Tentar de novo'),
         ' ', el('button', { class: 'btn perigo mini', onclick: async () => { if (confirm('Descartar este lançamento? Ele não será enviado.')) { await DB.del(i.id_transacao); abrirPendencias(); renderStatus(); } } }, 'Descartar'));
     }
     root.append(c);
   });
+  const env = lerEnviados();
+  if (env.length) {
+    root.append(el('h3', { class: 'secao' }, 'Já enviados (últimos)'));
+    env.slice(0, 25).forEach(e => root.append(el('div', { class: 'item' }, el('div', {}, e.titulo, el('span', { class: 'sub' }, 'Lançado em ' + new Date(e.criado).toLocaleString('pt-BR'))), el('span', { class: 'val' }, '✔'))));
+  }
 }
 
 /* ---------- início ---------- */
 document.addEventListener('DOMContentLoaded', () => {
-  $('#btn-login').onclick = entrar;
-  $('#login-senha').addEventListener('keydown', e => { if (e.key === 'Enter') entrar(); });
-  $('#btn-sair').onclick = () => { if (confirm('Sair da conta?')) sair(); };
-  $('#status-sync').onclick = async () => { const todos = await DB.todos(); if (todos.length) abrirPendencias(); else { toast('Atualizando…'); await sincronizar(); toast('Dados atualizados ✔'); } };
+  $('#status-sync').onclick = abrirPendencias;
   document.querySelectorAll('[data-voltar]').forEach(b => b.onclick = irMenu);
   window.addEventListener('online', sincronizar); window.addEventListener('offline', renderStatus);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
-  setInterval(sincronizar, 30000);
-  try { const s = JSON.parse(localStorage.getItem('sitio_sessao')); if (s) { S.usuario = s.u; S.token = s.t; iniciarApp(); return; } } catch (e) {}
-  mostrar('tela-login');
+  setInterval(sincronizar, 20000);
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
+  iniciarApp();
 });
