@@ -121,3 +121,16 @@ select + input[type=text] { margin-top: 8px; border-style: dashed; }
 #toast.on { transform: translate(-50%, 0); }
 #toast.erro { background: var(--erro); }
 @media (prefers-reduced-motion: reduce) { #toast { transition: none; } .painel.aviso .dot { animation: none; } }
+
+/* computador: mais largo, blocos em 4 colunas e formulário centralizado */
+@media (min-width: 900px) {
+  .tela { max-width: 1040px; }
+  .marca img { width: 300px; }
+  .painel { width: calc(100% - 48px); margin: 20px 24px 6px; }
+  .menu { grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 14px 24px 32px; }
+  .mod { min-height: 150px; }
+  .mod:hover { border-color: var(--lima); box-shadow: 0 6px 16px rgba(14,74,38,.12); }
+  .form, .abas, .ultimos { max-width: 680px; margin-left: auto; margin-right: auto; }
+  .ultimos { margin-top: 14px; }
+  .topo { padding: 12px 24px; }
+}
