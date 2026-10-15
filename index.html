@@ -11,31 +11,13 @@
 <body>
   <div id="toast" role="status" aria-live="polite"></div>
 
-  <!-- LOGIN -->
-  <section id="tela-login" class="tela tela-login">
-    <div class="login-marca">
-      <i class="ph-fill ph-leaf"></i>
-      <h1>Sítio Santa Izabel</h1>
-      <p>Registros da lavoura</p>
-    </div>
-    <div class="login-caixa">
-      <label class="rot" for="login-usuario">Usuário</label>
-      <input id="login-usuario" type="text" autocomplete="username" autocapitalize="none">
-      <label class="rot" for="login-senha">Senha</label>
-      <input id="login-senha" type="password" autocomplete="current-password">
-      <p id="login-erro" class="erro-msg" hidden></p>
-      <button id="btn-login" class="btn">Entrar</button>
-    </div>
-  </section>
-
   <!-- MENU -->
-  <section id="tela-menu" class="tela" hidden>
+  <section id="tela-menu" class="tela">
     <header class="topo">
       <div>
         <strong>Sítio Santa Izabel</strong>
-        <span id="usuario-nome" class="sub"></span>
+        <span class="sub">Registros da lavoura</span>
       </div>
-      <button id="btn-sair" class="btn-icone" aria-label="Sair"><i class="ph ph-sign-out"></i></button>
     </header>
     <button id="status-sync" class="pill" type="button"></button>
     <main id="grid-modulos" class="menu"></main>
