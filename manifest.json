@@ -1,0 +1,13 @@
+{
+  "name": "Sítio Santa Izabel",
+  "short_name": "Santa Izabel",
+  "description": "Registros da lavoura",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0e4a26",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
