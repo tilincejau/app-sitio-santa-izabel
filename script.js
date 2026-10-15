@@ -46,6 +46,28 @@ function toast(msg, tipo) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, 3200);
 }
 
+/* ---------- ícones (embutidos, funcionam sem internet) ---------- */
+const ICONES = {
+  'flask': '<path d="M9 3h6M10 3v6l-5.5 9.8A1.6 1.6 0 0 0 5.9 21h12.2a1.6 1.6 0 0 0 1.4-2.2L14 9V3M7.8 14.5h8.4"/>',
+  'gauge': '<path d="M3.5 17a8.5 8.5 0 1 1 17 0"/><path d="M12 17l4-6"/><circle cx="12" cy="17" r="1.2"/>',
+  'drop': '<path d="M12 3c3.6 4.3 6 7.3 6 10.5a6 6 0 0 1-12 0C6 10.3 8.4 7.3 12 3z"/>',
+  'cloud-rain': '<path d="M7 15a4.5 4.5 0 0 1-.4-9A6 6 0 0 1 18 7.6 3.9 3.9 0 0 1 17 15"/><path d="M8 18l-1 2.5M12 18l-1 2.5M16 18l-1 2.5"/>',
+  'shield-check': '<path d="M12 3l7 3v5.5c0 4.3-3 7.7-7 9.5-4-1.8-7-5.2-7-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
+  'gas-pump': '<path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M4 21h12M7 8h6v3.5H7z"/><path d="M15 9h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V9l-2.5-2.5"/>',
+  'truck': '<path d="M2 6.5h11v10H2zM13 9.5h4.2L20.5 13v3.5H13"/><circle cx="6.5" cy="18.5" r="1.8"/><circle cx="16.5" cy="18.5" r="1.8"/>',
+  'broom': '<path d="M14.5 3.5l6 6M13 5l6 6-3 2.5-5.5-5.5zM10.5 11l3 3c-1 4.2-4.2 6.5-8.5 6.5 0-4.3 2.3-7.5 5.5-9.5z"/>',
+  'sparkle': '<path d="M11 3.5l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2z"/><path d="M19 16v4M17 18h4"/>',
+  'package': '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
+  'camera': '<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>',
+  'image': '<path d="M4 5h16v14H4z"/><path d="M4 16l5-5 4 4 3-3 4 4"/><circle cx="9" cy="9.5" r="1"/>',
+  'caret': '<path d="M9 6l6 6-6 6"/>'
+};
+function ico(nome) {
+  const s = document.createElement('span'); s.className = 'ico';
+  s.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONES[nome] || ''}</svg>`;
+  return s;
+}
+
 /* ---------- estado e armazenamento ---------- */
 const S = {
   dados: { produtos: [], classes: [], listas: {}, estado: { hidro: {}, hidrorep: {}, abast: {} }, ultimos: {}, estoque: [], entradasSemNota: [] }
@@ -128,16 +150,22 @@ async function atualizarDados() {
   try {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
-    if (r.sucesso) { S.dados = r; localStorage.setItem('sitio_dados', JSON.stringify(r)); }
+    if (r.sucesso) { S.dados = r; localStorage.setItem('sitio_dados', JSON.stringify(r)); montarMenu(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
 async function renderStatus() {
   const b = $('#status-sync'); if (!b) return;
   const todos = await DB.todos(), erros = todos.filter(i => i.status === 'erro').length, esperando = todos.length - erros;
-  if (erros) { b.className = 'pill erro'; b.textContent = `${erros} lançamento(s) com erro — toque para ver`; }
-  else if (esperando) { b.className = 'pill aviso'; b.textContent = navigator.onLine ? `Enviando ${esperando} lançamento(s)…` : `${esperando} guardado(s) no celular. Ainda NÃO enviado(s) — envia sozinho quando tiver internet`; }
-  else { b.className = 'pill ok'; b.replaceChildren(el('i', { class: 'ph-fill ph-check-circle' }), ' Tudo enviado'); }
+  let cls = 'ok', txt = 'Tudo enviado', sub = 'Os lançamentos já estão na planilha';
+  if (erros) { cls = 'erro'; txt = `${erros} lançamento(s) com erro`; sub = 'Toque para ver e corrigir'; }
+  else if (esperando) {
+    cls = 'aviso';
+    txt = navigator.onLine ? `Enviando ${esperando} lançamento(s)…` : `${esperando} guardado(s) no celular`;
+    sub = navigator.onLine ? 'Aguardando a confirmação da planilha' : 'Ainda NÃO enviado. Envia sozinho quando tiver internet';
+  }
+  b.className = 'painel ' + cls;
+  b.replaceChildren(el('span', { class: 'dot' }), el('span', { class: 'txt' }, el('b', {}, txt), el('small', {}, sub)), ico('caret'));
 }
 
 /* ---------- telas ---------- */
@@ -165,7 +193,7 @@ const assin = () => ({ k: 'assinatura', t: 'assinatura', l: 'Assinatura' });
 const parseDH = s => { const d = new Date(s); return isNaN(d) ? null : d; };
 
 const MODULOS = [
-  { id: 'aplicacao', grupo: 'Aplicações', nome: 'Pulverização / Adubação', icone: 'ph-flask', cor: '#7a4fa3', largo: true,
+  { id: 'aplicacao', nome: 'Pulverização / Adubação', icone: 'ph-flask',
     campos: [
       { t: 'secao', l: 'Dados gerais' },
       { k: 'aplicacao', t: 'select', l: 'Aplicação', opts: ['PULVERIZAÇÃO', 'ADUBAÇÃO'] },
@@ -215,7 +243,7 @@ const MODULOS = [
       for (const [a, x] of Object.entries(V.areas || {})) if (x.inicio && x.fim && x.fim < x.inicio) return `Área ${a}: o fim não pode ser antes do início.`;
     } },
 
-  { id: 'hidrometro', grupo: 'Água', nome: 'Hidrômetro', icone: 'ph-gauge', cor: '#1f78a8',
+  { id: 'hidrometro', nome: 'Hidrômetro', icone: 'ph-gauge',
     campos: [
       { k: 'datahora', t: 'datetime', l: 'Data e hora', now: true },
       { k: 'itens', t: 'multi', l: 'Hidrômetro', opts: ['A', 'B'], subTitle: v => 'Hidrômetro ' + v,
@@ -232,7 +260,7 @@ const MODULOS = [
       resp(), assin()
     ] },
 
-  { id: 'irrigacao', grupo: 'Água', nome: 'Irrigação', icone: 'ph-drop', cor: '#1f78a8',
+  { id: 'irrigacao', nome: 'Irrigação', icone: 'ph-drop',
     campos: [
       { k: 'datahora', t: 'datetime', l: 'Data e hora', now: true },
       { k: 'itens', t: 'multi', l: 'Área (pode escolher várias)', subTitle: v => v,
@@ -248,10 +276,10 @@ const MODULOS = [
       resp(), assin()
     ] },
 
-  { id: 'pluviometro', grupo: 'Água', nome: 'Pluviômetro', icone: 'ph-cloud-rain', cor: '#1f78a8',
+  { id: 'pluviometro', nome: 'Pluviômetro', icone: 'ph-cloud-rain',
     campos: [{ k: 'datahora', t: 'datetime', l: 'Data e hora', now: true }, { k: 'leitura', t: 'number', l: 'Leitura (mm)' }, resp(), assin()] },
 
-  { id: 'hidrorepelente', grupo: 'Lavoura', nome: 'Hidrorrepelente (lavagem EPI)', icone: 'ph-shield-check', cor: '#8a6d1a',
+  { id: 'hidrorepelente', nome: 'Hidrorrepelente (lavagem EPI)', icone: 'ph-shield-check',
     campos: [
       { k: 'data', t: 'date', l: 'Data da lavagem', now: true },
       { k: 'talhao', t: 'select', l: 'Talhão', opts: ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3'] },
@@ -265,7 +293,7 @@ const MODULOS = [
       assin()
     ] },
 
-  { id: 'abastecimento', grupo: 'Máquinas e diesel', nome: 'Abastecimento', icone: 'ph-gas-pump', cor: '#b4531a',
+  { id: 'abastecimento', nome: 'Abastecimento', icone: 'ph-gas-pump',
     campos: [
       { k: 'data', t: 'date', l: 'Data', now: true },
       { k: 'maquina', t: 'select', l: 'Máquina', opts: 'maquinas', outro: true, persist: 'maquinas' },
@@ -286,10 +314,10 @@ const MODULOS = [
     ],
     validar: V => { const i = numero(V.horIni), f = numero(V.horFim); if (i != null && f != null && f < i) return 'O horímetro final não pode ser menor que o inicial.'; } },
 
-  { id: 'diesel', grupo: 'Máquinas e diesel', nome: 'Chegada de diesel', icone: 'ph-truck', cor: '#b4531a',
+  { id: 'diesel', nome: 'Chegada de diesel', icone: 'ph-truck',
     campos: [{ k: 'data', t: 'date', l: 'Data da compra', now: true }, { k: 'nf', t: 'text', l: 'Nota fiscal' }, { k: 'litros', t: 'number', l: 'Litros adquiridos (entrada)' }, resp(), assin()] },
 
-  { id: 'limpeza_local', grupo: 'Limpeza', nome: 'Limpeza do local', icone: 'ph-broom', cor: '#2f7d6d',
+  { id: 'limpeza_local', nome: 'Limpeza do local', icone: 'ph-broom',
     campos: [
       { k: 'data', t: 'date', l: 'Data', now: true },
       { k: 'areas', t: 'grupo', l: 'Situação de cada área', itens: [
@@ -301,7 +329,7 @@ const MODULOS = [
       resp(), assin()
     ] },
 
-  { id: 'limpeza_equip', grupo: 'Limpeza', nome: 'Limpeza dos equipamentos', icone: 'ph-sparkle', cor: '#2f7d6d',
+  { id: 'limpeza_equip', nome: 'Limpeza dos equipamentos', icone: 'ph-sparkle',
     campos: [
       { k: 'data', t: 'date', l: 'Data', now: true },
       { k: 'item', t: 'select', l: 'Item', opts: ['CAIXA', 'CARRETA', 'SACOLA'] },
@@ -311,7 +339,7 @@ const MODULOS = [
       resp(), assin()
     ] },
 
-  { id: 'estoque', grupo: 'Estoque', nome: 'Estoque de produtos', icone: 'ph-package', cor: '#16342a', largo: true, custom: () => abrirEstoque() }
+  { id: 'estoque', nome: 'Estoque de produtos', icone: 'ph-package', custom: () => abrirEstoque() }
 ];
 
 // telas de estoque (usam o mesmo motor)
@@ -433,7 +461,7 @@ function renderCampo(f, st, ctx) {
     }
     case 'foto': {
       const prev = el('img', { class: 'prev', hidden: true, alt: 'Prévia da foto' });
-      const botao = cam => el('label', { class: 'btn-foto' + (cam ? '' : ' sec') }, el('i', { class: 'ph ' + (cam ? 'ph-camera' : 'ph-image') }), cam ? 'Tirar foto' :'Galeria',
+      const botao = cam => el('label', { class: 'btn-foto' + (cam ? '' : ' sec') }, ico(cam ? 'camera' : 'image'), cam ? 'Tirar foto' :'Galeria',
         el('input', { type: 'file', accept: 'image/*', capture: cam ? 'environment' : null, hidden: true, onchange: async e => {
           const arq = e.target.files[0]; if (!arq) return;
           st[f.k] = await comprimir(arq); prev.src = st[f.k]; prev.hidden = false; ctx.refresh();
@@ -529,16 +557,16 @@ function montarForm(m, container, onSalvo) {
 }
 
 /* ---------- navegação dos módulos ---------- */
+function ultimoTexto(m) {
+  if (m.id === 'estoque') { const n = (S.dados.estoque || []).length; return n ? (n === 1 ? '1 produto' : `${n} produtos`) : ''; }
+  const r = ((S.dados.ultimos || {})[m.id] || [])[0];
+  if (!r) return '';
+  return m.id === 'aplicacao' ? `${r[0]} · Talhão ${r[2]}` : `Último: ${String(r[0]).slice(0, 10)}`;
+}
 function montarMenu() {
   const g = $('#grid-modulos'); g.replaceChildren();
-  const grupos = [...new Set(MODULOS.map(m => m.grupo))];
-  grupos.forEach(nome => {
-    g.append(el('h2', {}, nome));
-    const linha = el('div', { class: 'linha' });
-    MODULOS.filter(m => m.grupo === nome).forEach(m => linha.append(
-      el('button', { class: 'mod' + (m.largo ? ' largo' : ''), style: `--cor:${m.cor}`, onclick: () => abrirModulo(m) }, el('i', { class: 'ph ' + m.icone }), m.nome)));
-    g.append(linha);
-  });
+  MODULOS.forEach(m => g.append(el('button', { class: 'mod', onclick: () => abrirModulo(m) },
+    el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)))));
 }
 
 function abrirModulo(m) {
@@ -572,7 +600,7 @@ function renderPosicao(root) {
     root.append(el('h3', { class: 'secao' }, 'Entradas sem foto da nota'));
     sem.forEach(e => root.append(el('div', { class: 'cartao' },
       el('strong', {}, e.produto), el('span', { class: 'sub', style: 'display:block' }, `${fmt(Number(e.qtd))} ${e.un} · ${fmtData(e.data)}`),
-      el('label', { class: 'btn-foto sec', style: 'margin-top:10px' }, el('i', { class: 'ph ph-camera' }), 'Anexar foto da nota',
+      el('label', { class: 'btn-foto sec', style: 'margin-top:10px' }, ico('camera'), 'Anexar foto da nota',
         el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, onchange: async ev => {
           const arq = ev.target.files[0]; if (!arq) return;
           const id = uid(), foto = await comprimir(arq);
@@ -628,5 +656,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
   setInterval(sincronizar, 20000);
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});   // permite abrir o app sem internet
   iniciarApp();
 });
