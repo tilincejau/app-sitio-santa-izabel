@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#16342a">
+  <title>Sítio Santa Izabel</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+</head>
+<body>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <!-- LOGIN -->
+  <section id="tela-login" class="tela tela-login">
+    <div class="login-marca">
+      <i class="ph-fill ph-leaf"></i>
+      <h1>Sítio Santa Izabel</h1>
+      <p>Registros da lavoura</p>
+    </div>
+    <div class="login-caixa">
+      <label class="rot" for="login-usuario">Usuário</label>
+      <input id="login-usuario" type="text" autocomplete="username" autocapitalize="none">
+      <label class="rot" for="login-senha">Senha</label>
+      <input id="login-senha" type="password" autocomplete="current-password">
+      <p id="login-erro" class="erro-msg" hidden></p>
+      <button id="btn-login" class="btn">Entrar</button>
+    </div>
+  </section>
+
+  <!-- MENU -->
+  <section id="tela-menu" class="tela" hidden>
+    <header class="topo">
+      <div>
+        <strong>Sítio Santa Izabel</strong>
+        <span id="usuario-nome" class="sub"></span>
+      </div>
+      <button id="btn-sair" class="btn-icone" aria-label="Sair"><i class="ph ph-sign-out"></i></button>
+    </header>
+    <button id="status-sync" class="pill" type="button"></button>
+    <main id="grid-modulos" class="menu"></main>
+  </section>
+
+  <!-- FORMULÁRIO -->
+  <section id="tela-form" class="tela" hidden>
+    <header class="topo">
+      <button class="btn-icone" data-voltar aria-label="Voltar"><i class="ph ph-arrow-left"></i></button>
+      <strong id="form-titulo"></strong>
+    </header>
+    <div id="form-ultimos" class="ultimos" hidden></div>
+    <main id="form-root" class="form"></main>
+  </section>
+
+  <!-- ESTOQUE -->
+  <section id="tela-estoque" class="tela" hidden>
+    <header class="topo">
+      <button class="btn-icone" data-voltar aria-label="Voltar"><i class="ph ph-arrow-left"></i></button>
+      <strong>Estoque de produtos</strong>
+    </header>
+    <nav class="abas" id="estoque-abas"></nav>
+    <main id="estoque-root" class="form"></main>
+  </section>
+
+  <!-- PENDÊNCIAS -->
+  <section id="tela-pendencias" class="tela" hidden>
+    <header class="topo">
+      <button class="btn-icone" data-voltar aria-label="Voltar"><i class="ph ph-arrow-left"></i></button>
+      <strong>Envios</strong>
+    </header>
+    <main id="pendencias-root" class="form"></main>
+  </section>
+
+  <script src="script.js"></script>
+</body>
+</html>
