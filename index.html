@@ -3,30 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#16342a">
+  <meta name="theme-color" content="#0e4a26">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Santa Izabel">
   <title>Sítio Santa Izabel</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="icone-192.png">
+  <link rel="apple-touch-icon" href="icone-192.png">
   <link rel="stylesheet" href="style.css">
-  <script src="https://unpkg.com/@phosphor-icons/web"></script>
 </head>
 <body>
   <div id="toast" role="status" aria-live="polite"></div>
 
   <!-- MENU -->
   <section id="tela-menu" class="tela">
-    <header class="topo">
-      <div>
-        <strong>Sítio Santa Izabel</strong>
-        <span class="sub">Registros da lavoura</span>
-      </div>
-    </header>
-    <button id="status-sync" class="pill" type="button"></button>
+    <header class="marca"><img src="logo.png" alt="Sítio Santa Izabel"></header>
+    <button id="status-sync" class="painel" type="button"></button>
     <main id="grid-modulos" class="menu"></main>
   </section>
 
   <!-- FORMULÁRIO -->
   <section id="tela-form" class="tela" hidden>
     <header class="topo">
-      <button class="btn-icone" data-voltar aria-label="Voltar"><i class="ph ph-arrow-left"></i></button>
+      <button class="btn-icone" data-voltar aria-label="Voltar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
       <strong id="form-titulo"></strong>
     </header>
     <div id="form-ultimos" class="ultimos" hidden></div>
@@ -36,17 +35,17 @@
   <!-- ESTOQUE -->
   <section id="tela-estoque" class="tela" hidden>
     <header class="topo">
-      <button class="btn-icone" data-voltar aria-label="Voltar"><i class="ph ph-arrow-left"></i></button>
+      <button class="btn-icone" data-voltar aria-label="Voltar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
       <strong>Estoque de produtos</strong>
     </header>
     <nav class="abas" id="estoque-abas"></nav>
     <main id="estoque-root" class="form"></main>
   </section>
 
-  <!-- PENDÊNCIAS -->
+  <!-- ENVIOS -->
   <section id="tela-pendencias" class="tela" hidden>
     <header class="topo">
-      <button class="btn-icone" data-voltar aria-label="Voltar"><i class="ph ph-arrow-left"></i></button>
+      <button class="btn-icone" data-voltar aria-label="Voltar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
       <strong>Envios</strong>
     </header>
     <main id="pendencias-root" class="form"></main>
