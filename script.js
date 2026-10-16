@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v9';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v10';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const CHAVE = 'sitio-santa-izabel-2026';   // igual à CFG.CHAVE do Code.gs
@@ -601,7 +601,7 @@ function renderCampo(f, st, ctx) {
         if (sel.value === '__outro') { txt.hidden = false; st[f.k] = f.caixaAlta ? txt.value.trim().replace(/\s+/g, ' ').toUpperCase() : txt.value.trim(); st[f.k + '__novo'] = true; }
         else { txt.hidden = true; st[f.k] = sel.value; delete st[f.k + '__novo']; }
       };
-      if (f.def !== undefined) sel.value = f.def;
+      if (f.def !== undefined) { sel.value = f.def; if (sel.selectedIndex < 0) sel.value = ''; }   // padrão que não está na lista: deixa em branco
       st[f.k] = sel.value;
       sel.addEventListener('change', sync); txt.addEventListener('input', sync);
       if (f.persist) ctx.persist.push(() => st[f.k + '__novo'] && st[f.k] ? { lista: f.persist, valor: st[f.k] } : null);
@@ -803,19 +803,36 @@ function abrirModulo(m) {
 }
 
 /* ---------- estoque ---------- */
-let abaEstoque = 'posicao';
+let abaEstoque = 'posicao', produtoEntrada = null;
 function abrirEstoque(aba) {
   if (aba) abaEstoque = aba;
   mostrar('tela-estoque');
   const abas = $('#estoque-abas'); abas.replaceChildren();
-  [['posicao', 'Posição'], ['entrada', 'Chegou produto'], ['contagem', 'Contagem'], ['caixas', 'Caixas']].forEach(([id, nome]) =>
-    abas.append(el('button', { class: id === abaEstoque ? 'on' : '', onclick: () => abrirEstoque(id) }, nome)));
+  [['posicao', 'Posição'], ['resumo', 'Resumo'], ['entrada', 'Chegou produto'], ['caixas', 'Caixas']].forEach(([id, nome]) =>
+    abas.append(el('button', { class: id === abaEstoque ? 'on' : '', onclick: () => { produtoEntrada = null; abrirEstoque(id); } }, nome)));
   const root = $('#estoque-root');
-  if (abaEstoque === 'entrada') montarForm(FORM_ENTRADA, root, () => abrirEstoque('posicao'));
-  else if (abaEstoque === 'contagem') montarForm(FORM_CONTAGEM, root, () => abrirEstoque('posicao'));
+  if (abaEstoque === 'entrada') montarForm(formEntradaPara(produtoEntrada), root, () => { produtoEntrada = null; abrirEstoque('posicao'); });
   else if (abaEstoque === 'caixas') renderCaixas(root);
+  else if (abaEstoque === 'resumo') renderResumo(root);
   else renderPosicao(root);
 }
+
+// entrada de um produto que já existe: a tela abre com ele escolhido e na mesma unidade
+const formEntradaPara = p => p ? { ...FORM_ENTRADA, nome: 'Entrada de ' + p.nome,
+  campos: FORM_ENTRADA.campos.map(c => c.k === 'produtoId' ? { ...c, def: p.id } : c.k === 'unidade' ? { ...c, def: p.un } : c) } : FORM_ENTRADA;
+
+// unidades: tudo é comparado na unidade-base (mL, g, un). Estoque em L e uso em mL se compensam.
+const FATOR_UN = { L: 1000, ML: 1, KG: 1000, G: 1, UN: 1 }, GRUPO_UN = { L: 'vol', ML: 'vol', KG: 'mass', G: 'mass', UN: 'un' };
+const paraBaseJS = (q, u) => ({ v: q * (FATOR_UN[String(u).toUpperCase()] || 1), g: GRUPO_UN[String(u).toUpperCase()] || String(u).toLowerCase() });
+function exibirBaseJS(v, g) {
+  g = String(g).toLowerCase();
+  if (g === 'vol') return Math.abs(v) >= 1000 ? { q: v / 1000, un: 'L' } : { q: v, un: 'ML' };
+  if (g === 'mass') return Math.abs(v) >= 1000 ? { q: v / 1000, un: 'KG' } : { q: v, un: 'G' };
+  return { q: v, un: 'UN' };
+}
+const qtdTxt = (v, g) => { const e = exibirBaseJS(v, g); return `${fmt(e.q)} ${e.un}`; };
+const NOMES_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const nomeMes = ym => { const [a, m] = String(ym).split('-'); return `${NOMES_MES[+m - 1]} de ${a}`; };
 
 let subCaixas = null;
 function renderCaixas(root) {
@@ -863,19 +880,104 @@ function renderPosicao(root) {
           S.dados.entradasSemNota = sem.filter(x => x.id !== e.id); toast('Foto guardada ✔'); renderPosicao(root); sincronizar();
         } })))));
   }
-  root.append(el('h3', { class: 'secao' }, 'Quanto tem de cada produto'));
-  const busca = el('input', { type: 'search', placeholder: 'Buscar produto…' });
+  root.append(el('h3', { class: 'secao' }, 'Produtos em estoque'));
+  root.append(el('p', { class: 'sub' }, 'Toque em um produto para conferir a quantidade (contagem) ou dar entrada quando chegar mais.'));
+  const busca = el('input', { type: 'search', placeholder: 'Buscar produto…', autocomplete: 'off' });
   const lista = el('div');
   root.append(busca, lista);
+  let aberto = null;   // chave do produto aberto (código ou nome): os objetos da lista são trocados quando os dados atualizam
+  const chave = p => String(p.id || p.nome);
   const desenhar = () => {
     const q = busca.value.trim().toLowerCase();
     const itens = (S.dados.estoque || []).filter(p => p.nome.toLowerCase().includes(q));
-    lista.replaceChildren(...(itens.length ? itens.map(p => el('div', { class: 'item' },
-      el('div', {}, p.nome, el('span', { class: 'sub' }, p.contagem ? `Última contagem: ${p.contagem}` : 'Nunca foi contado')),
-      el('span', { class: 'val' + (p.negativo ? ' neg' : '') }, `${fmt(p.saldo)} ${p.un}`))) : [el('p', { class: 'sub' }, 'Nenhum produto encontrado.')]));
+    lista.replaceChildren(...(itens.length ? itens.map(p => {
+      const cab = el('button', { type: 'button', class: 'prod-cab', 'aria-expanded': String(aberto === chave(p)), onclick: () => { aberto = aberto === chave(p) ? null : chave(p); desenhar(); } },
+        el('div', {}, el('strong', {}, p.nome), el('span', { class: 'sub' }, p.contagem ? `Última contagem: ${p.contagem}` : 'Nunca foi contado')),
+        el('span', { class: 'val' + (p.negativo ? ' neg' : '') }, `${fmt(p.saldo)} ${p.un}`));
+      const card = el('div', { class: 'cartao-prod' + (aberto === chave(p) ? ' aberto' : '') }, cab);
+      if (aberto === chave(p)) card.append(painelProduto(p, desenhar));
+      return card;
+    }) : [el('p', { class: 'sub' }, 'Nenhum produto encontrado.')]));
   };
   busca.addEventListener('input', desenhar); desenhar();
-  root.append(el('p', { class: 'sub' }, 'Saldo = última contagem + entradas − o que foi usado nas aplicações desde então. Valor em vermelho: usado mais do que entrou; falta registrar uma entrada ou contagem.'));
+  root.append(el('p', { class: 'sub' }, 'Saldo = última contagem + entradas − o que foi usado desde então. Em vermelho: usou-se mais do que entrou; falta registrar uma entrada ou fazer a contagem.'));
+  root.append(el('button', { type: 'button', class: 'btn sec', onclick: () => pedirRelatorio(new Date().toISOString().slice(0, 7)) }, 'Gerar relatório deste mês (Word)'));
+}
+
+function painelProduto(p, redesenhar) {
+  const painel = el('div', { class: 'painel-prod' });
+  if (p.negativo) painel.append(el('div', { class: 'dica aviso' }, '⚠ Foi usado mais do que o registrado como estoque. Faça a contagem abaixo para acertar o saldo.'));
+  if (p.conflito) painel.append(el('div', { class: 'dica aviso' }, '⚠ Este produto tem registros em unidades diferentes (por exemplo, L e KG). O saldo pode estar errado: conte de novo.'));
+  if (!p.id) { painel.append(el('div', { class: 'dica' }, 'Este produto não está no cadastro, então não dá para contar por aqui.')); return painel; }
+
+  painel.append(el('div', { class: 'dica' }, `No sistema: ${fmt(p.saldo)} ${p.un}`));
+  const qtd = el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: '0', placeholder: 'Quanto tem agora?', autocomplete: 'off' });
+  const un = el('select', {}, UNID.map(u => el('option', { value: u, selected: u === p.un ? true : null }, u)));
+  const resultado = el('div', { class: 'dica', hidden: true });
+  const comparar = () => {
+    const q = numero(qtd.value); resultado.hidden = q == null;
+    if (q == null) return null;
+    const cont = paraBaseJS(q, un.value), sis = paraBaseJS(p.saldo, p.un);
+    if (cont.g !== sis.g && p.saldo !== 0) { resultado.textContent = `⚠ Unidade diferente do sistema (${p.un}). A contagem vai valer na unidade que você escolheu.`; resultado.classList.add('aviso'); return { q, dif: null }; }
+    const dif = (cont.v - sis.v) / (FATOR_UN[un.value] || 1);
+    resultado.classList.toggle('aviso', Math.abs(dif) > 1e-9);
+    resultado.textContent = Math.abs(dif) < 1e-9 ? 'Confere com o sistema.' : `Diferença: ${dif > 0 ? '+' : '−'}${fmt(Math.abs(dif))} ${un.value} em relação ao sistema.`;
+    return { q, dif };
+  };
+  qtd.addEventListener('input', comparar); un.addEventListener('change', comparar);
+  painel.append(el('label', { class: 'rot' }, 'Contagem: quanto tem agora'), el('div', { class: 'duplo' }, qtd, un), resultado);
+
+  const confirmar = el('button', { type: 'button', class: 'btn', style: 'margin-top:12px' }, 'Confirmar contagem');
+  confirmar.onclick = async () => {
+    const r = comparar(); if (!r || r.q < 0) return toast('Digite quanto tem em estoque.', 'erro');
+    const dif = r.dif == null ? '' : (Math.abs(r.dif) < 1e-9 ? 'Confere com o sistema.' : `Diferença: ${r.dif > 0 ? '+' : '−'}${fmt(Math.abs(r.dif))} ${un.value}.`);
+    if (!confirm(`Confirmar a contagem de ${p.nome}?\n\nContado: ${fmt(r.q)} ${un.value}\nNo sistema: ${fmt(p.saldo)} ${p.un}\n${dif}\n\nA partir de agora este passa a ser o estoque.`)) return;
+    confirmar.disabled = true;
+    const id = uid();
+    const payload = { acao: 'salvar', modulo: 'estoque_contagem', id_transacao: id, dados: { data: hoje(), produtoId: p.id, qtd: String(r.q), unidade: un.value }, novasListas: [] };
+    if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: 'Contagem de ' + p.nome }))) { confirmar.disabled = false; return; }
+    const b = paraBaseJS(r.q, un.value), e = exibirBaseJS(b.v, b.g);
+    p.saldo = Math.round(e.q * 100) / 100; p.un = e.un; p.contagem = fmtData(hoje()); p.negativo = false; p.conflito = false; p.mov = true;
+    toast('Contagem guardada ✔ Envia sozinha quando tiver internet'); redesenhar(); sincronizar();
+  };
+  painel.append(confirmar);
+  painel.append(el('button', { type: 'button', class: 'btn sec', onclick: () => { produtoEntrada = p; abrirEstoque('entrada'); } }, 'Chegou mais deste produto'));
+  return painel;
+}
+
+// Resumo do mês: o que foi usado em cada talhão
+let mesResumo = null;
+function renderResumo(root) {
+  root.replaceChildren();
+  const uso = S.dados.usoMensal || [], atual = new Date().toISOString().slice(0, 7);
+  const meses = [...new Set([atual, ...uso.map(u => u.mes)])].sort().reverse();
+  if (!mesResumo || !meses.includes(mesResumo)) mesResumo = meses[0];
+  const sel = el('select', { onchange: e => { mesResumo = e.target.value; renderResumo(root); } },
+    meses.map(m => el('option', { value: m, selected: m === mesResumo ? true : null }, nomeMes(m))));
+  root.append(el('div', { class: 'campo' }, el('label', { class: 'rot' }, 'Mês'), sel));
+
+  const doMes = uso.filter(u => u.mes === mesResumo);
+  if (!doMes.length) root.append(el('p', { class: 'sub' }, 'Nenhum uso de produto registrado neste mês.'));
+  else {
+    const porTalhao = {};
+    doMes.forEach(u => (porTalhao[u.talhao] = porTalhao[u.talhao] || []).push(u));
+    root.append(el('h3', { class: 'secao' }, 'Usado em cada talhão'));
+    Object.keys(porTalhao).sort().forEach(t => root.append(el('div', { class: 'cartao' }, el('strong', {}, t),
+      porTalhao[t].sort((a, b) => a.produto.localeCompare(b.produto)).map(u => el('div', { class: 'item' },
+        el('div', {}, u.produto, el('span', { class: 'sub' }, `${u.n} ${u.n === 1 ? 'uso' : 'usos'}`)), el('span', { class: 'val' }, qtdTxt(u.v, u.g)))))));
+    const tot = {};
+    doMes.forEach(u => { const k = u.produto.toUpperCase(); const o = tot[k] || (tot[k] = { produto: u.produto, v: 0, g: u.g }); o.v += u.v; });
+    root.append(el('h3', { class: 'secao' }, 'Total do mês, por produto'));
+    Object.keys(tot).sort().forEach(k => root.append(el('div', { class: 'item' }, el('div', {}, tot[k].produto), el('span', { class: 'val' }, qtdTxt(tot[k].v, tot[k].g)))));
+  }
+  root.append(el('button', { type: 'button', class: 'btn', onclick: () => pedirRelatorio(mesResumo) }, `Gerar relatório de ${nomeMes(mesResumo)} (Word)`));
+  root.append(el('p', { class: 'sub' }, 'O relatório traz a posição do estoque no fim do mês e este resumo por talhão. Ele é salvo na pasta de relatórios, em 1 a 2 minutos.'));
+}
+
+async function pedirRelatorio(mes) {
+  const id = uid();
+  if (!(await guardar({ id_transacao: id, payload: { acao: 'estoque_relatorio', id_transacao: id, mes }, criado: Date.now(), titulo: 'Relatório de estoque ' + mes }))) return;
+  toast(`Pedido guardado ✔ O relatório de ${nomeMes(mes)} aparece na pasta em 1 a 2 minutos.`); sincronizar();
 }
 
 /* ---------- envios ---------- */
