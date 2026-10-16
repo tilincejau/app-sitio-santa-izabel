@@ -134,3 +134,5 @@ select + input[type=text] { margin-top: 8px; border-style: dashed; }
   .ultimos { margin-top: 14px; }
   .topo { padding: 12px 24px; }
 }
+
+.versao { grid-column: 1 / -1; margin: 6px 0 0; text-align: center; font-size: 12px; color: var(--suave); }
