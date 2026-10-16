@@ -5,6 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
+const APP_VERSAO = 'v8';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const CHAVE = 'sitio-santa-izabel-2026';   // igual à CFG.CHAVE do Code.gs
@@ -192,10 +193,9 @@ function iniciarApp() {
    showIf(V, store) mostra/esconde.  outro:true acrescenta "Outro (digitar)".  persist:'lista' guarda o "Outro" para a próxima vez.
    ========================================================= */
 const ehAdub = V => V.aplicacao === 'ADUBAÇÃO';
-const PSI_COM_PRODUTO = /^(Sim|Repasse)/;
+const PSI_COM_PRODUTO = /^(Sim|Repasse)/;   // controle com aplicação: pede produtos e quem aplicou
 const faixa = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
 const BF_EVENTO = V => !!V.evento && V.evento !== 'Não';   // instalação ou troca de feromônio
-const BF_PRE = k => ({ preChave: V => V.up, pre: (V, E) => ((E.bicho || {})[V.up] || {})[k] });   // preenche com o último valor da UP   // controle com aplicação: pede produtos e quem aplicou
 const resp = () => ({ k: 'resp', t: 'select', l: 'Responsável', opts: RESP });
 const assin = () => ({ k: 'assinatura', t: 'assinatura', l: 'Assinatura' });
 const parseDH = s => { const d = new Date(s); return isNaN(d) ? null : d; };
@@ -391,13 +391,24 @@ const MODULOS = [
       { t: 'secao', l: 'Local e armadilha' },
       { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
       { k: 'up', t: 'select', l: 'UP / Talhão', opts: ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'] },
-      { t: 'info', show: (V, s, E) => V.up && (E.bicho || {})[V.up] ? 'Os dados abaixo vieram preenchidos da última leitura deste talhão. Confira e altere o que mudou.' : '' },
-      { k: 'areaHa', t: 'number', l: 'Área (ha)', ...BF_PRE('areaHa') },
-      { k: 'idArmadilha', t: 'text', l: 'Identificação da armadilha', ...BF_PRE('idArmadilha') },
-      { k: 'localizacao', t: 'text', l: 'Localização (linha onde está a armadilha)', ...BF_PRE('localizacao') },
+      { t: 'info', show: (V, s, E) => {
+        const u = V.up && (E.bicho || {})[V.up]; if (!u) return '';
+        return `Última leitura deste talhão: área ${u.areaHa} ha · armadilha "${u.idArmadilha}" · ${u.localizacao} · ${u.nArmadilhas} armadilhas · distância ${u.distancia}`;
+      } },
+      { t: 'acao', l: 'Usar os dados da última leitura', showIf: V => !!(V.up && (S.dados.estado.bicho || {})[V.up]),
+        fazer: (V, E, ctx) => {
+          const u = (E.bicho || {})[V.up]; if (!u) return;
+          [['areaHa', u.areaHa], ['idArmadilha', u.idArmadilha], ['localizacao', u.localizacao], ['nArmadilhas', u.nArmadilhas], ['distancia', u.distancia]].forEach(([k, v]) => {
+            const i = ctx.inputs[k]; if (i && v !== undefined && v !== '') { i.value = v; V[k] = String(v); }
+          });
+          ctx.refresh(); toast('Preenchido com a última leitura. Confira antes de salvar.');
+        } },
+      { k: 'areaHa', t: 'number', l: 'Área (ha)' },
+      { k: 'idArmadilha', t: 'text', l: 'Identificação da armadilha' },
+      { k: 'localizacao', t: 'text', l: 'Localização (linha onde está a armadilha)' },
       { k: 'coordenadas', t: 'gps', l: 'Coordenadas', opt: true },
-      { k: 'nArmadilhas', t: 'number', l: 'Nº de armadilhas na UP', ...BF_PRE('nArmadilhas') },
-      { k: 'distancia', t: 'text', l: 'Distância entre armadilhas', ...BF_PRE('distancia') },
+      { k: 'nArmadilhas', t: 'number', l: 'Nº de armadilhas na UP' },
+      { k: 'distancia', t: 'text', l: 'Distância entre armadilhas' },
       { t: 'info', show: () => 'Referência de bula e pesquisa (Koppert/Cultivar): 1 armadilha para cada 10 ha, cerca de 350 m entre elas. Confira a bula do feromônio que você usa.' },
       { t: 'secao', l: 'Leitura da armadilha' },
       { k: 'data', t: 'date', l: 'Data da leitura', now: true },
@@ -486,9 +497,10 @@ function renderCampo(f, st, ctx) {
   switch (f.t) {
     case 'text': case 'number': case 'date': case 'datetime': case 'time': case 'textarea': {
       const tipo = { text: 'text', number: 'number', date: 'date', datetime: 'datetime-local', time: 'time' }[f.t];
-      const inp = f.t === 'textarea' ? el('textarea', { rows: 4 }) : el('input', { type: tipo, inputmode: f.t === 'number' ? 'decimal' : null, step: f.t === 'number' ? 'any' : null });
+      const inp = f.t === 'textarea' ? el('textarea', { rows: 4 }) : el('input', { type: tipo, autocomplete: 'off', inputmode: f.t === 'number' ? 'decimal' : null, step: f.t === 'number' ? 'any' : null });
       const v0 = f.def !== undefined ? f.def : f.now ? (f.t === 'date' ? hoje() : agora()) : '';
       inp.value = v0; st[f.k] = v0; if (f.ro) inp.readOnly = true;
+      ctx.inputs[f.k] = inp;
       inp.addEventListener('input', () => { st[f.k] = inp.value; });
       if (f.pre) ctx.dyns.push(() => {   // preenche com o último valor conhecido quando a "chave" (ex.: a UP) muda; o usuário pode editar
         const chave = String(f.preChave ? f.preChave(ctx.V) : '');
@@ -581,6 +593,10 @@ function renderCampo(f, st, ctx) {
       w.append(rotulo, el('div', { class: 'fotos' }, botao(true), botao(false)), prev);
       break;
     }
+    case 'acao': {   // botão que executa uma ação sobre o formulário (ex.: copiar a última leitura)
+      w.append(el('button', { type: 'button', class: 'btn sec', style: 'margin-top:0', onclick: () => f.fazer(ctx.V, S.dados.estado, ctx) }, f.l));
+      break;
+    }
     case 'gps': {
       const saida = el('input', { type: 'text', readonly: true, placeholder: 'Toque no botão para capturar' });
       const btn = el('button', { type: 'button', class: 'btn sec', style: 'margin-top:8px' }, 'Capturar coordenadas do celular');
@@ -656,7 +672,7 @@ function comprimir(file, max = 1400, q = .7) {
 
 // Monta o formulário de um módulo dentro de "container". onSalvo() é chamado depois de guardar.
 function montarForm(m, container, onSalvo) {
-  const ctx = { V: {}, checks: [], shows: [], dyns: [], infos: [], finalizers: [], persist: [] };
+  const ctx = { V: {}, inputs: {}, checks: [], shows: [], dyns: [], infos: [], finalizers: [], persist: [] };
   ctx.refresh = () => { ctx.dyns.forEach(f => f()); ctx.shows.forEach(f => f()); ctx.infos.forEach(f => f()); };
   container.replaceChildren();
   m.campos.forEach(f => container.append(renderCampo(f, ctx.V, ctx)));
@@ -697,6 +713,7 @@ function montarMenu() {
   const g = $('#grid-modulos'); g.replaceChildren();
   MODULOS.forEach(m => g.append(el('button', { class: 'mod', onclick: () => abrirModulo(m) },
     el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)))));
+  g.append(el('p', { class: 'versao' }, 'Versão ' + APP_VERSAO));
 }
 
 function abrirModulo(m) {
