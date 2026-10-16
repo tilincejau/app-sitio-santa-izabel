@@ -13,7 +13,7 @@ const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
 const UNID = ['L', 'KG', 'ML', 'G'];
 const MAQ_MANUAL = ['TR05', 'TR10'];
 const MAQUINAS = ['TR05', 'TR10', 'TR20 MASSEY GERGUSON 4275 - TRAÇADO 4X4', 'TR21 MASSEY GERGUSON 4275 - SIMPLES', 'TR22 NEW HOLLAND TL 5.80'];
-const LISTAS_BASE = { maquinas: MAQUINAS };
+const LISTAS_BASE = { maquinas: MAQUINAS, monitores: ['LUCAS MILHOSSI'] };
 const OK_TXT = 'Concluído (Limpo)', PEND_TXT = 'Pendente (Precisa de limpeza)';
 
 const EPI_TXT = 'OBRIGATÓRIO: Calçado de segurança, óculos de segurança, luva anticorte, luva impermeável, máscara pesticida, boné árabe, mangote, protetor solar, perneira, luva química, vestimenta agente químicos, protetor auricular concha e protetor auricular.';
@@ -378,7 +378,7 @@ const MODULOS = [
       { k: 'assinaturaAplicador', t: 'assinatura', l: 'Assinatura de quem aplicou', showIf: V => PSI_COM_PRODUTO.test(V.controle || '') },
       { t: 'secao', l: 'Fechamento' },
       { k: 'obs', t: 'textarea', l: 'Observações / providências adotadas', opt: true },
-      { k: 'respMonitor', t: 'select', l: 'Responsável pelo monitoramento', opts: RESP },
+      { k: 'respMonitor', t: 'select', l: 'Responsável pelo monitoramento', opts: 'monitores', outro: true, persist: 'monitores', caixaAlta: true },
       { k: 'assinatura', t: 'assinatura', l: 'Assinatura do monitor' }
     ] },
 
@@ -448,7 +448,7 @@ function renderCampo(f, st, ctx) {
       const sel = el('select', {}, el('option', { value: '' }, 'Selecione…'), opcoes(f).map(o => el('option', { value: o.v }, o.l)), f.outro ? el('option', { value: '__outro' }, 'Outro (digitar)…') : null);
       const txt = el('input', { type: 'text', placeholder: 'Digite aqui…', hidden: true });
       const sync = () => {
-        if (sel.value === '__outro') { txt.hidden = false; st[f.k] = txt.value.trim(); st[f.k + '__novo'] = true; }
+        if (sel.value === '__outro') { txt.hidden = false; st[f.k] = f.caixaAlta ? txt.value.trim().replace(/\s+/g, ' ').toUpperCase() : txt.value.trim(); st[f.k + '__novo'] = true; }
         else { txt.hidden = true; st[f.k] = sel.value; delete st[f.k + '__novo']; }
       };
       if (f.def !== undefined) sel.value = f.def;
