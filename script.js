@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v8';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v9';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const CHAVE = 'sitio-santa-izabel-2026';   // igual à CFG.CHAVE do Code.gs
@@ -14,7 +14,7 @@ const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
 const UNID = ['L', 'KG', 'ML', 'G', 'UN'];
 const MAQ_MANUAL = ['TR05', 'TR10'];
 const MAQUINAS = ['TR05', 'TR10', 'TR20 MASSEY GERGUSON 4275 - TRAÇADO 4X4', 'TR21 MASSEY GERGUSON 4275 - SIMPLES', 'TR22 NEW HOLLAND TL 5.80'];
-const LISTAS_BASE = { maquinas: MAQUINAS, monitores: ['LUCAS MILHOSSI'] };
+const LISTAS_BASE = { maquinas: MAQUINAS, monitores: ['LUCAS MILHOSSI'], destinos: ['FRUTATA', 'PRITAM'], expedidores: [...RESP, 'LUCAS MILHOSSI'] };
 const OK_TXT = 'Concluído (Limpo)', PEND_TXT = 'Pendente (Precisa de limpeza)';
 
 const EPI_TXT = 'OBRIGATÓRIO: Calçado de segurança, óculos de segurança, luva anticorte, luva impermeável, máscara pesticida, boné árabe, mangote, protetor solar, perneira, luva química, vestimenta agente químicos, protetor auricular concha e protetor auricular.';
@@ -34,6 +34,7 @@ function el(tag, attrs, ...kids) {
 }
 const pad2 = n => String(n).padStart(2, '0');
 const hoje = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+const hhmm = () => { const d = new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 const agora = () => { const d = new Date(); return `${hoje()}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 const numero = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return isNaN(n) ? null : n; };
 const fmt = (n, d = 2) => n.toLocaleString('pt-BR', { maximumFractionDigits: d });
@@ -63,6 +64,7 @@ const ICONES = {
   'image': '<path d="M4 5h16v14H4z"/><path d="M4 16l5-5 4 4 3-3 4 4"/><circle cx="9" cy="9.5" r="1"/>',
   'bug': '<path d="M12 8c-2.2 0-4 1.8-4 4v2a4 4 0 0 0 8 0v-2c0-2.2-1.8-4-4-4z"/><path d="M9.5 5.5L11 8M14.5 5.5L13 8M4 12h4M16 12h4M5 18l3-2M19 18l-3-2M5 7l3 2M19 7l-3 2"/>',
   'target': '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
+  'send': '<path d="M7 17L17 7M8 7h9v9"/>',
   'caret': '<path d="M9 6l6 6-6 6"/>'
 };
 function ico(nome) {
@@ -193,6 +195,13 @@ function iniciarApp() {
    showIf(V, store) mostra/esconde.  outro:true acrescenta "Outro (digitar)".  persist:'lista' guarda o "Outro" para a próxima vez.
    ========================================================= */
 const ehAdub = V => V.aplicacao === 'ADUBAÇÃO';
+const UPS = ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'];
+const DESTINOS = {   // destinos padrão: preenchem cidade e CPF/CNPJ (que podem ser editados)
+  FRUTATA: { cidade: 'Area Rural, SN - KM 19, Area Rural de Itapolis CEP 14907-899, Itapolis/SP', doc: '63.293.267/0001-34' },
+  PRITAM: { cidade: 'AVENIDA PREFEITO TARQUINIO BELLENTANI, 2955, PQ INDUSTRIAL VICENTE NIGRO CEP 14900-000, Itapolis/SP', doc: '04.827.322/0002-40' }
+};
+const padraoDestino = (V, campo) => (DESTINOS[String(V.destino || '').trim().toUpperCase()] || {})[campo];
+const somaCaixas = itens => Object.values(itens || {}).reduce((t, o) => t + (parseInt(o.qtd, 10) || 0), 0);
 const PSI_COM_PRODUTO = /^(Sim|Repasse)/;   // controle com aplicação: pede produtos e quem aplicou
 const faixa = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
 const BF_EVENTO = V => !!V.evento && V.evento !== 'Não';   // instalação ou troca de feromônio
@@ -449,6 +458,33 @@ const MODULOS = [
       { k: 'assinaturaMonitor', t: 'assinatura', l: 'Assinatura do responsável pelo monitoramento' }
     ] },
 
+  { id: 'expedicao', nome: 'Expedição (talão de cargas)', icone: 'ph-send',
+    aoSalvar: V => ajustarCaixasLocal('SAÍDA', String(V.destino || '').trim().toUpperCase(), somaCaixas(V.itens)),
+    campos: [
+      { t: 'secao', l: 'Carga' },
+      { t: 'info', show: () => 'CPF/CNPJ de origem: 21.686.599/0001-39\nPropriedade: Sítio Santa Izabel\nOrigem: Faz. Monte Alegre s/n CEP: 14940000, Ibitinga/SP' },
+      { k: 'data', t: 'date', l: 'Data', now: true },
+      { k: 'hora', t: 'time', l: 'Hora de saída', now: true },
+      { k: 'destino', t: 'select', l: 'Destino da carga', opts: 'destinos', outro: true, persist: 'destinos', caixaAlta: true },
+      { k: 'cidadeDestino', t: 'text', l: 'Cidade destino', preChave: V => V.destino, pre: V => padraoDestino(V, 'cidade') },
+      { k: 'docDestino', t: 'text', l: 'CPF/CNPJ destino', preChave: V => V.destino, pre: V => padraoDestino(V, 'doc') },
+      { t: 'secao', l: 'Caixas por talhão' },
+      { k: 'itens', t: 'multi', l: 'Talhão (pode escolher mais de um)', opts: UPS, subTitle: v => v,
+        sub: [{ k: 'qtd', t: 'number', inteiro: true, l: 'Quantidade de caixas' }] },
+      { t: 'info', show: V => { const t = somaCaixas(V.itens); return t > 0 ? `Total da carga: ${t} caixas` : ''; } },
+      { t: 'secao', l: 'Transporte e assinaturas' },
+      { k: 'placa', t: 'text', l: 'Placa do veículo', upper: true },
+      { k: 'motorista', t: 'text', l: 'Motorista', upper: true },
+      { k: 'assinaturaMotorista', t: 'assinatura', l: 'Assinatura do comprador / motorista' },
+      { k: 'respExpedicao', t: 'select', l: 'Responsável pela expedição', opts: 'expedidores', outro: true, persist: 'expedidores', caixaAlta: true },
+      { k: 'assinaturaFazenda', t: 'assinatura', l: 'Assinatura de quem está na expedição' },
+      { k: 'obs', t: 'textarea', l: 'Observações', opt: true }
+    ],
+    validar: V => {
+      if (!(somaCaixas(V.itens) > 0)) return 'Informe a quantidade de caixas.';
+      if (String(V.placa || '').replace(/[^A-Za-z0-9]/g, '').length < 7) return 'Confira a placa: ela tem 7 letras e números.';
+    } },
+
   { id: 'estoque', nome: 'Estoque de produtos', icone: 'ph-package', custom: () => abrirEstoque() }
 ];
 
@@ -472,6 +508,39 @@ const FORM_ENTRADA = { id: 'estoque_entrada', nome: 'Entrada', campos: [
   { t: 'info', show: (V) => V.foto ? '' : 'Sem foto agora? Tudo bem: a entrada fica como "sem nota" e você anexa a foto depois, na aba Posição.' },
   resp()
 ] };
+
+// controle de caixas: tudo que sai na expedição precisa voltar
+const FORM_CX_RETORNO = { id: 'caixas_retorno', nome: 'Retorno de caixas',
+  aoSalvar: V => ajustarCaixasLocal('RETORNO', String(V.destino || '').trim().toUpperCase(), V.qtd),
+  campos: [
+    { k: 'data', t: 'date', l: 'Data do retorno', now: true },
+    { k: 'destino', t: 'select', l: 'De onde as caixas voltaram', opts: 'destinos', outro: true, persist: 'destinos', caixaAlta: true },
+    { k: 'qtd', t: 'number', inteiro: true, l: 'Quantidade de caixas que voltaram' },
+    { k: 'resp', t: 'select', l: 'Responsável pelo recebimento', opts: 'expedidores', outro: true, persist: 'expedidores', caixaAlta: true },
+    { k: 'obs', t: 'textarea', l: 'Observações', opt: true }
+  ] };
+const FORM_CX_CONTAGEM = { id: 'caixas_contagem', nome: 'Contagem de caixas',
+  aoSalvar: V => ajustarCaixasLocal('CONTAGEM', '', V.qtd),
+  campos: [
+    { k: 'data', t: 'date', l: 'Data da contagem', now: true },
+    { k: 'qtd', t: 'number', inteiro: true, l: 'Quantas caixas existem na fazenda agora?' },
+    { k: 'resp', t: 'select', l: 'Responsável pela contagem', opts: 'expedidores', outro: true, persist: 'expedidores', caixaAlta: true }
+  ] };
+
+// atualiza na hora o saldo mostrado no celular (o servidor confirma na próxima sincronização)
+function ajustarCaixasLocal(tipo, destino, qtd) {
+  const c = S.dados.caixas = S.dados.caixas || { naFazenda: 0, temContagem: false, contagemQtd: 0, contagemData: '', porDestino: [], movimentos: [] };
+  const q = parseInt(qtd, 10) || 0;
+  if (tipo === 'CONTAGEM') { c.naFazenda = q; c.temContagem = true; c.contagemQtd = q; c.contagemData = hoje(); }
+  else {
+    c.naFazenda += tipo === 'RETORNO' ? q : -q;
+    let o = c.porDestino.find(x => x.destino === destino);
+    if (!o) { o = { destino, saiu: 0, voltou: 0, falta: 0 }; c.porDestino.push(o); }
+    if (tipo === 'SAÍDA') o.saiu += q; else o.voltou += q;
+    o.falta = o.saiu - o.voltou;
+  }
+  (c.movimentos = c.movimentos || []).unshift({ data: hoje(), tipo, destino, qtd: q });
+}
 
 /* =========================================================
    MOTOR DE FORMULÁRIOS
@@ -497,17 +566,19 @@ function renderCampo(f, st, ctx) {
   switch (f.t) {
     case 'text': case 'number': case 'date': case 'datetime': case 'time': case 'textarea': {
       const tipo = { text: 'text', number: 'number', date: 'date', datetime: 'datetime-local', time: 'time' }[f.t];
-      const inp = f.t === 'textarea' ? el('textarea', { rows: 4 }) : el('input', { type: tipo, autocomplete: 'off', inputmode: f.t === 'number' ? 'decimal' : null, step: f.t === 'number' ? 'any' : null });
-      const v0 = f.def !== undefined ? f.def : f.now ? (f.t === 'date' ? hoje() : agora()) : '';
+      const inp = f.t === 'textarea' ? el('textarea', { rows: 4 }) : el('input', { type: tipo, autocomplete: 'off', inputmode: f.t === 'number' ? (f.inteiro ? 'numeric' : 'decimal') : null, step: f.t === 'number' ? (f.inteiro ? '1' : 'any') : null, min: f.inteiro ? '0' : null });
+      const v0 = f.def !== undefined ? f.def : f.now ? (f.t === 'date' ? hoje() : f.t === 'time' ? hhmm() : agora()) : '';
       inp.value = v0; st[f.k] = v0; if (f.ro) inp.readOnly = true;
       ctx.inputs[f.k] = inp;
+      if (f.upper) { inp.classList.add('caixa-alta'); ctx.finalizers.push(() => { st[f.k] = String(st[f.k] ?? '').trim().toUpperCase(); }); }
       inp.addEventListener('input', () => { st[f.k] = inp.value; });
       if (f.pre) ctx.dyns.push(() => {   // preenche com o último valor conhecido quando a "chave" (ex.: a UP) muda; o usuário pode editar
         const chave = String(f.preChave ? f.preChave(ctx.V) : '');
         if (inp.dataset.pre === chave) return;
         inp.dataset.pre = chave;
         const v = f.pre(ctx.V, S.dados.estado);
-        if (v !== undefined && v !== null && String(v) !== '') { inp.value = v; st[f.k] = String(v); }
+        if (v !== undefined && v !== null && String(v) !== '') { inp.value = v; st[f.k] = String(v); inp.dataset.autoPre = '1'; }
+        else if (inp.dataset.autoPre === '1') { inp.value = ''; st[f.k] = ''; inp.dataset.autoPre = '0'; }   // trocou para um destino sem padrão: limpa para digitar
       });
       if (f.dyn) ctx.dyns.push(() => {
         const r = f.dyn(ctx.V, S.dados.estado);
@@ -515,7 +586,11 @@ function renderCampo(f, st, ctx) {
         else if (inp.dataset.auto === '1') { inp.value = ''; st[f.k] = ''; inp.dataset.auto = '0'; }
         inp.readOnly = !!r.ro;
       });
-      if (obrig) checa(() => String(st[f.k] ?? '').trim() === '' ? `Preencha: ${f.l}` : null);
+      if (obrig || f.inteiro) checa(() => {
+        const v = String(st[f.k] ?? '').trim();
+        if (v === '') return obrig ? `Preencha: ${f.l}` : null;
+        return f.inteiro && !/^\d+$/.test(v) ? `${f.l}: use só números inteiros (sem vírgula nem ponto)` : null;
+      });
       w.append(rotulo, inp);
       break;
     }
@@ -694,6 +769,7 @@ function montarForm(m, container, onSalvo) {
     const payload = { acao: 'salvar', modulo: m.id, id_transacao: id, dados: JSON.parse(JSON.stringify(ctx.V)), novasListas: ctx.persist.map(f => f()).filter(Boolean) };
     if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: m.nome, fp }))) { btn.disabled = false; return; }
     (payload.novasListas).forEach(n => { const l = S.dados.listas[n.lista] = S.dados.listas[n.lista] || []; if (!l.includes(n.valor)) l.push(n.valor); });
+    if (m.aoSalvar) { try { m.aoSalvar(ctx.V); } catch (e) {} }
     toast('Guardado no celular ✔ Envia sozinho quando tiver internet');
     onSalvo(); sincronizar();
   };
@@ -732,12 +808,44 @@ function abrirEstoque(aba) {
   if (aba) abaEstoque = aba;
   mostrar('tela-estoque');
   const abas = $('#estoque-abas'); abas.replaceChildren();
-  [['posicao', 'Posição'], ['entrada', 'Chegou produto'], ['contagem', 'Contagem']].forEach(([id, nome]) =>
+  [['posicao', 'Posição'], ['entrada', 'Chegou produto'], ['contagem', 'Contagem'], ['caixas', 'Caixas']].forEach(([id, nome]) =>
     abas.append(el('button', { class: id === abaEstoque ? 'on' : '', onclick: () => abrirEstoque(id) }, nome)));
   const root = $('#estoque-root');
   if (abaEstoque === 'entrada') montarForm(FORM_ENTRADA, root, () => abrirEstoque('posicao'));
   else if (abaEstoque === 'contagem') montarForm(FORM_CONTAGEM, root, () => abrirEstoque('posicao'));
+  else if (abaEstoque === 'caixas') renderCaixas(root);
   else renderPosicao(root);
+}
+
+let subCaixas = null;
+function renderCaixas(root) {
+  root.replaceChildren();
+  const voltar = () => { subCaixas = null; abrirEstoque('caixas'); };
+  if (subCaixas) {
+    montarForm(subCaixas === 'retorno' ? FORM_CX_RETORNO : FORM_CX_CONTAGEM, root, voltar);
+    root.prepend(el('button', { type: 'button', class: 'link', onclick: voltar }, '← Voltar para as caixas'));
+    return;
+  }
+  const c = S.dados.caixas;
+  if (!c) { root.append(el('p', { class: 'sub' }, 'O controle de caixas ainda não está disponível. Abra o app com internet para carregar.')); return; }
+  root.append(el('div', { class: 'cartao' + (c.naFazenda < 0 ? ' erro' : '') },
+    el('span', { class: 'sub' }, 'Caixas na fazenda agora'), el('div', { class: 'grande' + (c.naFazenda < 0 ? ' neg' : '') }, String(c.naFazenda)),
+    el('span', { class: 'sub' }, c.temContagem ? `Última contagem: ${fmtData(c.contagemData)} (${c.contagemQtd} caixas)` : 'Ainda não houve contagem. Conte as caixas e lance a contagem para o saldo ficar certo.')));
+  root.append(el('button', { type: 'button', class: 'btn', onclick: () => { subCaixas = 'retorno'; abrirEstoque('caixas'); } }, 'Lançar retorno de caixas'));
+  root.append(el('button', { type: 'button', class: 'btn sec', onclick: () => { subCaixas = 'contagem'; abrirEstoque('caixas'); } }, 'Contar as caixas da fazenda'));
+
+  root.append(el('h3', { class: 'secao' }, 'Em poder dos clientes'));
+  if (!c.porDestino.length) root.append(el('p', { class: 'sub' }, 'Nenhuma caixa saiu ainda.'));
+  c.porDestino.forEach(o => root.append(el('div', { class: 'item' },
+    el('div', {}, o.destino || '(sem destino)', el('span', { class: 'sub' }, `Saíram ${o.saiu} · voltaram ${o.voltou}`)),
+    el('span', { class: 'val' + (o.falta > 0 ? ' neg' : '') }, o.falta > 0 ? `faltam ${o.falta}` : o.falta < 0 ? `voltaram ${-o.falta} a mais` : 'em dia'))));
+
+  if ((c.movimentos || []).length) {
+    root.append(el('h3', { class: 'secao' }, 'Últimos movimentos'));
+    c.movimentos.slice(0, 12).forEach(m => root.append(el('div', { class: 'item' },
+      el('div', {}, `${m.tipo === 'SAÍDA' ? 'Saída' : m.tipo === 'RETORNO' ? 'Retorno' : 'Contagem'}${m.destino ? ' · ' + m.destino : ''}`, el('span', { class: 'sub' }, fmtData(m.data))),
+      el('span', { class: 'val' }, (m.tipo === 'SAÍDA' ? '− ' : m.tipo === 'RETORNO' ? '+ ' : '= ') + m.qtd))));
+  }
 }
 
 function renderPosicao(root) {
