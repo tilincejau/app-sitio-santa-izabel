@@ -140,3 +140,14 @@ select + input[type=text] { margin-top: 8px; border-style: dashed; }
 .caixa-alta { text-transform: uppercase; }
 .grande { margin: 2px 0; font-size: 40px; font-weight: 800; line-height: 1.1; color: var(--verde); }
 .grande.neg { color: var(--erro); }
+
+/* produtos do estoque que abrem para conferir / dar entrada */
+.cartao-prod { margin-top: 10px; border: 1px solid var(--linha); border-radius: var(--raio); background: var(--papel); overflow: hidden; }
+.cartao-prod.aberto { border-color: var(--verde-2); box-shadow: 0 0 0 2px rgba(140,202,35,.35); }
+.prod-cab { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; min-height: 60px; padding: 10px 14px; border: 0; background: none; font: inherit; color: var(--tinta); text-align: left; cursor: pointer; }
+.prod-cab .sub { display: block; }
+.prod-cab .val { font-weight: 800; white-space: nowrap; color: var(--verde); }
+.prod-cab .val.neg { color: var(--erro); }
+.painel-prod { padding: 4px 14px 16px; border-top: 1px solid var(--linha); }
+.painel-prod .duplo { grid-template-columns: 2fr 1fr; }
+.painel-prod .dica { margin-top: 10px; }
