@@ -60,6 +60,7 @@ const ICONES = {
   'package': '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
   'camera': '<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>',
   'image': '<path d="M4 5h16v14H4z"/><path d="M4 16l5-5 4 4 3-3 4 4"/><circle cx="9" cy="9.5" r="1"/>',
+  'bug': '<path d="M12 8c-2.2 0-4 1.8-4 4v2a4 4 0 0 0 8 0v-2c0-2.2-1.8-4-4-4z"/><path d="M9.5 5.5L11 8M14.5 5.5L13 8M4 12h4M16 12h4M5 18l3-2M19 18l-3-2M5 7l3 2M19 7l-3 2"/>',
   'caret': '<path d="M9 6l6 6-6 6"/>'
 };
 function ico(nome) {
@@ -190,6 +191,7 @@ function iniciarApp() {
    showIf(V, store) mostra/esconde.  outro:true acrescenta "Outro (digitar)".  persist:'lista' guarda o "Outro" para a próxima vez.
    ========================================================= */
 const ehAdub = V => V.aplicacao === 'ADUBAÇÃO';
+const PSI_COM_PRODUTO = /^(Sim|Repasse)/;   // controle com aplicação: pede produtos e quem aplicou
 const resp = () => ({ k: 'resp', t: 'select', l: 'Responsável', opts: RESP });
 const assin = () => ({ k: 'assinatura', t: 'assinatura', l: 'Assinatura' });
 const parseDH = s => { const d = new Date(s); return isNaN(d) ? null : d; };
@@ -341,6 +343,45 @@ const MODULOS = [
       resp(), assin()
     ] },
 
+  { id: 'psilideo', nome: 'Monitoramento Psilídeo / HLB', icone: 'ph-bug',
+    campos: [
+      { t: 'secao', l: 'Local' },
+      { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
+      { k: 'up', t: 'select', l: 'UP / Talhão', opts: ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'] },
+      { k: 'areaHa', t: 'number', l: 'Área (ha)' },
+      { k: 'metodo', t: 'select', l: 'Método utilizado', outro: true, opts: ['Inspeção visual das brotações', 'Armadilha adesiva'] },
+      { k: 'nPontos', t: 'number', l: 'Nº de pontos / plantas avaliadas' },
+      { t: 'secao', l: 'Monitoramento' },
+      { k: 'data', t: 'date', l: 'Data', now: true },
+      { k: 'brotacao', t: 'select', l: 'Brotação presente?', opts: [
+        { v: 'Ausente', l: 'Ausente (Sem brotação na planta)' },
+        { v: 'Início / Leve', l: 'Início / Leve (Pequenos fluxos vegetativos começando a apontar)' },
+        { v: 'Em expansão / Plena', l: 'Em expansão / Plena (Folhas ainda tenras e abertas, fase de maior atratividade para o psilídeo)' },
+        { v: 'Madura / Fim', l: 'Madura / Fim (Folhas já endurecendo, cor verde mais escuro, perdendo a atratividade)' }] },
+      { k: 'psilideo', t: 'select', l: 'Psilídeo encontrado?', opts: [
+        { v: 'Ausente', l: 'Ausente (Zero psilídeos)' },
+        { v: 'Apenas Ovos', l: 'Apenas Ovos (Indicativo de migração recente)' },
+        { v: 'Apenas Ninfas', l: 'Apenas Ninfas (Necessita controle rápido, pois estão se alimentando da planta)' },
+        { v: 'Apenas Adultos', l: 'Apenas Adultos (Insetos voadores, risco de disseminação do HLB)' },
+        { v: 'Ninfas e Adultos', l: 'Ninfas e Adultos (Infestação estabelecida)' }] },
+      { k: 'linha', t: 'number', l: 'Localização: Linha' },
+      { k: 'planta', t: 'number', l: 'Localização: Nº da planta' },
+      { k: 'controle', t: 'select', l: 'Controle necessário?', opts: [
+        { v: 'Não', l: 'Não (Abaixo do nível de controle / Sem praga)' },
+        { v: 'Sim - Preventivo', l: 'Sim - Preventivo (Sem praga, mas com brotação atraente ou talhão vizinho infestado)' },
+        { v: 'Sim - Urgente', l: 'Sim - Urgente (Presença de ninfas ou adultos vivos)' },
+        { v: 'Repasse / Reaplicação', l: 'Repasse / Reaplicação (Controle anterior falhou ou choveu logo após a aplicação)' },
+        { v: 'Erradicação', l: 'Erradicação (Planta com HLB confirmado: o controle é eliminar a planta, não aplicar veneno)' }] },
+      { t: 'secao', l: 'Aplicação do controle', showIf: V => PSI_COM_PRODUTO.test(V.controle || '') },
+      { k: 'produtos', t: 'produtos', modo: 'psilideo', l: 'Produtos aplicados (até 10)', showIf: V => PSI_COM_PRODUTO.test(V.controle || '') },
+      { k: 'respAplicacao', t: 'select', l: 'Responsável pela aplicação', opts: RESP, showIf: V => PSI_COM_PRODUTO.test(V.controle || '') },
+      { k: 'assinaturaAplicador', t: 'assinatura', l: 'Assinatura de quem aplicou', showIf: V => PSI_COM_PRODUTO.test(V.controle || '') },
+      { t: 'secao', l: 'Fechamento' },
+      { k: 'obs', t: 'textarea', l: 'Observações / providências adotadas', opt: true },
+      { k: 'respMonitor', t: 'select', l: 'Responsável pelo monitoramento', opts: RESP },
+      { k: 'assinatura', t: 'assinatura', l: 'Assinatura do monitor' }
+    ] },
+
   { id: 'estoque', nome: 'Estoque de produtos', icone: 'ph-package', custom: () => abrirEstoque() }
 ];
 
@@ -375,7 +416,11 @@ function opcoes(f) {
 }
 
 function renderCampo(f, st, ctx) {
-  if (f.t === 'secao') return el('h3', { class: 'secao' }, f.l);
+  if (f.t === 'secao') {
+    const h = el('h3', { class: 'secao' }, f.l);
+    if (f.showIf) ctx.shows.push(() => { h.hidden = !f.showIf(ctx.V, st); });
+    return h;
+  }
   const w = el('div', { class: 'campo' });
   const obrig = !f.opt;
   const rotulo = f.l ? el('label', { class: 'rot' }, f.l, obrig && f.t !== 'info' ? el('span', { class: 'obrig' }, ' *') : null) : null;
@@ -486,7 +531,8 @@ function renderProdutos(f, st, ctx, w, rotulo, checa) {
   const lista = []; st[f.k] = lista;
   const cont = el('div', { class: 'prods' });
   const btnAdd = el('button', { type: 'button', class: 'btn sec', onclick: () => novo() }, '+ Adicionar produto');
-  const adub = V => ehAdub(V), pulv = V => !ehAdub(V), novoP = (V, s) => s.id === 'NOVO';
+  const psi = f.modo === 'psilideo';
+  const adub = V => !psi && ehAdub(V), pulv = V => psi || !ehAdub(V), novoP = (V, s) => s.id === 'NOVO';
   const campos = () => [
     { k: 'id', t: 'select', l: 'Produto', opts: () => [...S.dados.produtos.map(p => ({ v: p.id, l: p.nome })), { v: 'NOVO', l: '➕ Outro (produto novo)' }] },
     { k: 'nome', t: 'text', l: 'Nome do produto novo', showIf: novoP },
@@ -497,6 +543,7 @@ function renderProdutos(f, st, ctx, w, rotulo, checa) {
     { k: 'pes', t: 'select', l: 'Quantidade de pés', opts: ['7500', '4200', '2200'], showIf: adub },
     { k: 'dosePlanta', t: 'number', l: 'Dose por planta', showIf: adub },
     { k: 'unidade', t: 'select', l: 'Unidade', opts: UNID },
+    ...(psi ? [{ k: 'datahora', t: 'datetime', l: 'Data e hora da aplicação', now: true }] : []),
     { t: 'info', show: (V, s) => adub(V) && numero(s.pes) && numero(s.dosePlanta) ? `Dose por talhão: ${fmt(numero(s.pes) * numero(s.dosePlanta), 3)} ${s.unidade || ''}` : '' }
   ];
   const numerar = () => { cont.querySelectorAll('.prod-topo strong').forEach((s, i) => { s.textContent = `Produto ${i + 1}`; }); btnAdd.hidden = lista.length >= 10; };
