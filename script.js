@@ -10,7 +10,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIB
 const CHAVE = 'sitio-santa-izabel-2026';   // igual à CFG.CHAVE do Code.gs
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
-const UNID = ['L', 'KG', 'ML', 'G'];
+const UNID = ['L', 'KG', 'ML', 'G', 'UN'];
 const MAQ_MANUAL = ['TR05', 'TR10'];
 const MAQUINAS = ['TR05', 'TR10', 'TR20 MASSEY GERGUSON 4275 - TRAÇADO 4X4', 'TR21 MASSEY GERGUSON 4275 - SIMPLES', 'TR22 NEW HOLLAND TL 5.80'];
 const LISTAS_BASE = { maquinas: MAQUINAS, monitores: ['LUCAS MILHOSSI'] };
@@ -61,6 +61,7 @@ const ICONES = {
   'camera': '<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>',
   'image': '<path d="M4 5h16v14H4z"/><path d="M4 16l5-5 4 4 3-3 4 4"/><circle cx="9" cy="9.5" r="1"/>',
   'bug': '<path d="M12 8c-2.2 0-4 1.8-4 4v2a4 4 0 0 0 8 0v-2c0-2.2-1.8-4-4-4z"/><path d="M9.5 5.5L11 8M14.5 5.5L13 8M4 12h4M16 12h4M5 18l3-2M19 18l-3-2M5 7l3 2M19 7l-3 2"/>',
+  'target': '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
   'caret': '<path d="M9 6l6 6-6 6"/>'
 };
 function ico(nome) {
@@ -191,7 +192,10 @@ function iniciarApp() {
    showIf(V, store) mostra/esconde.  outro:true acrescenta "Outro (digitar)".  persist:'lista' guarda o "Outro" para a próxima vez.
    ========================================================= */
 const ehAdub = V => V.aplicacao === 'ADUBAÇÃO';
-const PSI_COM_PRODUTO = /^(Sim|Repasse)/;   // controle com aplicação: pede produtos e quem aplicou
+const PSI_COM_PRODUTO = /^(Sim|Repasse)/;
+const faixa = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
+const BF_EVENTO = V => !!V.evento && V.evento !== 'Não';   // instalação ou troca de feromônio
+const BF_PRE = k => ({ preChave: V => V.up, pre: (V, E) => ((E.bicho || {})[V.up] || {})[k] });   // preenche com o último valor da UP   // controle com aplicação: pede produtos e quem aplicou
 const resp = () => ({ k: 'resp', t: 'select', l: 'Responsável', opts: RESP });
 const assin = () => ({ k: 'assinatura', t: 'assinatura', l: 'Assinatura' });
 const parseDH = s => { const d = new Date(s); return isNaN(d) ? null : d; };
@@ -382,6 +386,58 @@ const MODULOS = [
       { k: 'assinatura', t: 'assinatura', l: 'Assinatura do monitor' }
     ] },
 
+  { id: 'bichofurao', nome: 'Monitoramento Bicho-furão', icone: 'ph-target',
+    campos: [
+      { t: 'secao', l: 'Local e armadilha' },
+      { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
+      { k: 'up', t: 'select', l: 'UP / Talhão', opts: ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'] },
+      { t: 'info', show: (V, s, E) => V.up && (E.bicho || {})[V.up] ? 'Os dados abaixo vieram preenchidos da última leitura deste talhão. Confira e altere o que mudou.' : '' },
+      { k: 'areaHa', t: 'number', l: 'Área (ha)', ...BF_PRE('areaHa') },
+      { k: 'idArmadilha', t: 'text', l: 'Identificação da armadilha', ...BF_PRE('idArmadilha') },
+      { k: 'localizacao', t: 'text', l: 'Localização (linha onde está a armadilha)', ...BF_PRE('localizacao') },
+      { k: 'coordenadas', t: 'gps', l: 'Coordenadas', opt: true },
+      { k: 'nArmadilhas', t: 'number', l: 'Nº de armadilhas na UP', ...BF_PRE('nArmadilhas') },
+      { k: 'distancia', t: 'text', l: 'Distância entre armadilhas', ...BF_PRE('distancia') },
+      { t: 'info', show: () => 'Referência de bula e pesquisa (Koppert/Cultivar): 1 armadilha para cada 10 ha, cerca de 350 m entre elas. Confira a bula do feromônio que você usa.' },
+      { t: 'secao', l: 'Leitura da armadilha' },
+      { k: 'data', t: 'date', l: 'Data da leitura', now: true },
+      { k: 'armadilha', t: 'select', l: 'Armadilha nº', outro: true, opts: faixa(1, 30) },
+      { k: 'adultos', t: 'select', l: 'Nº de adultos capturados', outro: true, opts: faixa(0, 20) },
+      { t: 'info', show: (V, s, E) => {
+        const a = numero(V.adultos); if (a == null) return '';
+        const prev = (((E.bicho || {})[V.up] || {}).leituras || {})[String(V.armadilha)];
+        const passada = prev != null ? ` Na leitura anterior desta armadilha foram ${prev}.` : '';
+        if (a >= 10) return '⚠ 10 ou mais adultos em uma semana: atinge o nível de ação (referência da ficha).' + passada;
+        if (a >= 6) return (prev != null && prev >= 6 ? '⚠ 6 ou mais adultos por duas semanas seguidas: atinge o nível de ação.' : 'Com 6 ou mais adultos, repetindo na próxima semana atinge o nível de ação.') + passada;
+        return passada.trim();
+      } },
+      { k: 'limpeza', t: 'select', l: 'Limpeza / retirada realizada?', outro: true, opts: ['Sim', 'Não', 'Não necessário'] },
+      { k: 'nivel', t: 'select', l: 'Atingiu nível de ação?', outro: true, opts: [
+        { v: 'Não', l: 'Não' },
+        { v: 'Sim (6+ por 2 semanas)', l: 'Sim - 6 ou mais adultos por 2 semanas seguidas' },
+        { v: 'Sim (10+ em 1 semana)', l: 'Sim - 10 ou mais adultos em uma semana' }] },
+      { k: 'medida', t: 'select', l: 'Medida de controle', outro: true, opts: ['Nenhuma', 'Troca do feromônio', 'Reposição / limpeza da armadilha', 'Controle conforme orientação técnica'] },
+      { k: 'dataMedida', t: 'date', l: 'Data da medida de controle', now: true, showIf: V => V.medida && V.medida !== 'Nenhuma' },
+      { k: 'respVisualizar', t: 'select', l: 'Responsável por visualizar a armadilha', opts: [...RESP, 'LUCAS MILHOSSI'] },
+      { k: 'assinatura', t: 'assinatura', l: 'Assinatura de quem visualizou' },
+      { t: 'secao', l: 'Feromônio (estoque)' },
+      { k: 'evento', t: 'select', l: 'Houve instalação ou troca de feromônio nesta visita?', opts: ['Não', 'Instalação', 'Troca'], def: 'Não' },
+      { k: 'dataTroca', t: 'date', l: 'Data da instalação / troca', now: true, showIf: BF_EVENTO },
+      { k: 'feromonioId', t: 'select', l: 'Feromônio (marca)', showIf: BF_EVENTO, opts: () => {
+        const todos = S.dados.produtos, fer = todos.filter(p => /ferom/i.test(p.tipo || ''));
+        return [...(fer.length ? fer : todos).map(p => ({ v: p.id, l: p.nome })), { v: 'NOVO', l: '➕ Feromônio novo (não está na lista)' }];
+      } },
+      { k: 'nome', t: 'text', l: 'Nome / marca do feromônio novo', showIf: (V, s) => BF_EVENTO(V) && V.feromonioId === 'NOVO' },
+      { k: 'lote', t: 'text', l: 'Lote do feromônio', showIf: BF_EVENTO },
+      { k: 'qtd', t: 'number', l: 'Quantidade usada', showIf: BF_EVENTO },
+      { k: 'unidade', t: 'select', l: 'Unidade', opts: UNID, def: 'UN', showIf: BF_EVENTO },
+      { k: 'proximaTroca', t: 'date', l: 'Próxima troca prevista', showIf: BF_EVENTO },
+      { t: 'secao', l: 'Fechamento' },
+      { k: 'obs', t: 'textarea', l: 'Observações / providências adotadas', opt: true },
+      { k: 'respMonitor', t: 'select', l: 'Responsável pelo monitoramento', opts: 'monitores', outro: true, persist: 'monitores', caixaAlta: true },
+      { k: 'assinaturaMonitor', t: 'assinatura', l: 'Assinatura do responsável pelo monitoramento' }
+    ] },
+
   { id: 'estoque', nome: 'Estoque de produtos', icone: 'ph-package', custom: () => abrirEstoque() }
 ];
 
@@ -434,6 +490,13 @@ function renderCampo(f, st, ctx) {
       const v0 = f.def !== undefined ? f.def : f.now ? (f.t === 'date' ? hoje() : agora()) : '';
       inp.value = v0; st[f.k] = v0; if (f.ro) inp.readOnly = true;
       inp.addEventListener('input', () => { st[f.k] = inp.value; });
+      if (f.pre) ctx.dyns.push(() => {   // preenche com o último valor conhecido quando a "chave" (ex.: a UP) muda; o usuário pode editar
+        const chave = String(f.preChave ? f.preChave(ctx.V) : '');
+        if (inp.dataset.pre === chave) return;
+        inp.dataset.pre = chave;
+        const v = f.pre(ctx.V, S.dados.estado);
+        if (v !== undefined && v !== null && String(v) !== '') { inp.value = v; st[f.k] = String(v); }
+      });
       if (f.dyn) ctx.dyns.push(() => {
         const r = f.dyn(ctx.V, S.dados.estado);
         if (r.auto) { if (inp.value !== String(r.value)) { inp.value = r.value; st[f.k] = String(r.value); } inp.dataset.auto = '1'; }
@@ -516,6 +579,24 @@ function renderCampo(f, st, ctx) {
       if (obrig) checa(() => st[f.k] ? null : `Tire a foto: ${f.l}`);
       st[f.k] = '';
       w.append(rotulo, el('div', { class: 'fotos' }, botao(true), botao(false)), prev);
+      break;
+    }
+    case 'gps': {
+      const saida = el('input', { type: 'text', readonly: true, placeholder: 'Toque no botão para capturar' });
+      const btn = el('button', { type: 'button', class: 'btn sec', style: 'margin-top:8px' }, 'Capturar coordenadas do celular');
+      btn.onclick = () => {
+        if (!navigator.geolocation) return toast('Este aparelho não permite capturar a localização.', 'erro');
+        btn.disabled = true; btn.textContent = 'Buscando sinal de GPS…';
+        navigator.geolocation.getCurrentPosition(p => {
+          st[f.k] = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`;
+          saida.value = `${st[f.k]}  (precisão ±${Math.round(p.coords.accuracy)} m)`;
+          btn.disabled = false; btn.textContent = 'Capturar de novo'; ctx.refresh();
+        }, () => { toast('Não consegui pegar a localização. Confira a permissão de GPS do navegador.', 'erro'); btn.disabled = false; btn.textContent = 'Capturar coordenadas do celular'; },
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
+      };
+      st[f.k] = '';
+      if (obrig) checa(() => st[f.k] ? null : `Capture as coordenadas: ${f.l}`);
+      w.append(rotulo, saida, btn);
       break;
     }
     case 'info': {
