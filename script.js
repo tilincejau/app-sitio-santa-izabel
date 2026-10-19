@@ -5,10 +5,8 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v10';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v11';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
-
-const CHAVE = 'sitio-santa-izabel-2026';   // igual à CFG.CHAVE do Code.gs
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
 const UNID = ['L', 'KG', 'ML', 'G', 'UN'];
@@ -75,6 +73,7 @@ function ico(nome) {
 
 /* ---------- estado e armazenamento ---------- */
 const S = {
+  codigo: localStorage.getItem('sitio_codigo') || '', nome: localStorage.getItem('sitio_nome') || '',
   dados: { produtos: [], classes: [], listas: {}, estado: { hidro: {}, hidrorep: {}, abast: {} }, ultimos: {}, estoque: [], entradasSemNota: [] }
 };
 
@@ -102,8 +101,8 @@ async function fetchJSON(url, opts) {
   try { const r = await fetch(url, { ...opts, signal: ctl.signal }); return await r.json(); }
   finally { clearTimeout(t); }
 }
-const api = body => fetchJSON(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, chave: CHAVE }) });
-const apiGet = params => fetchJSON(API_URL + '?' + new URLSearchParams({ ...params, chave: CHAVE }));
+const api = body => fetchJSON(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, codigo: S.codigo }) });
+const apiGet = params => fetchJSON(API_URL + '?' + new URLSearchParams({ ...params, codigo: S.codigo }));
 
 /* ---------- guardar no aparelho ---------- */
 async function guardar(item) {
@@ -142,9 +141,9 @@ async function sincronizar(forcarDados) {
     const fila = (await DB.todos()).filter(i => i.status !== 'erro').sort((a, b) => a.criado - b.criado);
     for (const item of fila) {
       let r;
-      try { r = await api({ ...item.payload, usuario: 'app' }); } catch (e) { break; }   // sem sinal ou resposta ruim: tenta depois
+      try { r = await api({ ...item.payload }); } catch (e) { break; }   // sem sinal ou resposta ruim: tenta depois
       if (r.sucesso) { lembrarEnviado(item); await DB.del(item.id_transacao); enviou = true; }
-      else if (r.codigo === 'AUTH') { toast('A chave do app não confere com o backend.', 'erro'); break; }
+      else if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo. O que você já lançou continua guardado no celular.'); break; }
       else if (r.codigo === 'TEMP') break;
       else { item.status = 'erro'; item.erro = r.erro || 'Erro desconhecido'; await DB.put(item); }
     }
@@ -157,6 +156,7 @@ async function atualizarDados() {
   try {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
+    if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo.'); return; }
     if (r.sucesso) { S.dados = r; ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(r)); montarMenu(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
@@ -175,6 +175,40 @@ async function renderStatus() {
   b.replaceChildren(el('span', { class: 'dot' }), el('span', { class: 'txt' }, el('b', {}, txt), el('small', {}, sub)), ico('caret'));
 }
 
+/* ---------- acesso ---------- */
+function pedirAcesso(msg) {
+  S.codigo = ''; S.nome = '';
+  localStorage.removeItem('sitio_codigo'); localStorage.removeItem('sitio_nome');
+  mostrar('tela-acesso');
+  const m = $('#acesso-msg'); m.textContent = msg || ''; m.hidden = !msg;
+  setTimeout(() => { const i = $('#campo-codigo'); if (i) i.focus(); }, 100);
+}
+async function entrarComCodigo() {
+  const campo = $('#campo-codigo'), m = $('#acesso-msg'), btn = $('#btn-acesso');
+  const cod = campo.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  m.hidden = true;
+  if (cod.length < 6) { m.textContent = 'Digite o código completo.'; m.hidden = false; return; }
+  btn.disabled = true; btn.textContent = 'Conferindo…';
+  try {
+    S.codigo = cod;
+    const r = await apiGet({ acao: 'ping' });
+    if (!r.sucesso) throw new Error(r.codigo === 'AUTH' ? 'Código inválido ou desativado.' : (r.erro || 'Erro ao conferir o código.'));
+    S.nome = r.nome || '';
+    localStorage.setItem('sitio_codigo', cod); localStorage.setItem('sitio_nome', S.nome);
+    campo.value = '';
+    iniciarApp();
+  } catch (e) {
+    S.codigo = '';
+    m.textContent = /fetch|Failed|abort/i.test(e.message) ? 'Sem internet. Para o primeiro acesso é preciso estar conectado.' : e.message;
+    m.hidden = false;
+  }
+  btn.disabled = false; btn.textContent = 'Entrar';
+}
+function sairDoAparelho() {
+  if (!confirm('Sair deste aparelho? Você vai precisar digitar o código de novo. O que ainda não foi enviado continua guardado.')) return;
+  pedirAcesso();
+}
+
 /* ---------- telas ---------- */
 function mostrar(id) {
   document.querySelectorAll('.tela').forEach(t => { t.hidden = t.id !== id; });
@@ -183,6 +217,7 @@ function mostrar(id) {
 function irMenu() { mostrar('tela-menu'); renderStatus(); }
 
 function iniciarApp() {
+  if (!S.codigo) { pedirAcesso(); return; }
   try { const c = JSON.parse(localStorage.getItem('sitio_dados')); if (c) S.dados = c; } catch (e) {}
   montarMenu(); irMenu();
   sincronizar(true);
@@ -789,7 +824,7 @@ function montarMenu() {
   const g = $('#grid-modulos'); g.replaceChildren();
   MODULOS.forEach(m => g.append(el('button', { class: 'mod', onclick: () => abrirModulo(m) },
     el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)))));
-  g.append(el('p', { class: 'versao' }, 'Versão ' + APP_VERSAO));
+  g.append(el('p', { class: 'versao' }, `Versão ${APP_VERSAO}${S.nome ? ' · ' + S.nome + ' · ' : ' · '}`, el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: sairDoAparelho }, 'sair')));
 }
 
 function abrirModulo(m) {
@@ -1008,6 +1043,8 @@ async function abrirPendencias() {
 /* ---------- início ---------- */
 document.addEventListener('DOMContentLoaded', () => {
   $('#status-sync').onclick = abrirPendencias;
+  $('#btn-acesso').onclick = entrarComCodigo;
+  $('#campo-codigo').addEventListener('keydown', e => { if (e.key === 'Enter') entrarComCodigo(); });
   document.querySelectorAll('[data-voltar]').forEach(b => b.onclick = irMenu);
   window.addEventListener('online', () => sincronizar()); window.addEventListener('offline', renderStatus);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
