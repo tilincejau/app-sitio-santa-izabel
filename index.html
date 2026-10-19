@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://script.google.com https://script.googleusercontent.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#0e4a26">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Santa Izabel">
@@ -15,8 +17,22 @@
 <body>
   <div id="toast" role="status" aria-live="polite"></div>
 
+  <!-- ACESSO -->
+  <section id="tela-acesso" class="tela" hidden>
+    <header class="marca"><img src="logo.png" alt="Sítio Santa Izabel"></header>
+    <main class="form">
+      <h2 style="margin:18px 0 4px">Código de acesso</h2>
+      <p class="sub" style="margin:0 0 12px">Digite o código que você recebeu. Ele fica guardado neste aparelho, e você só precisa digitar uma vez.</p>
+      <div class="campo">
+        <input id="campo-codigo" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="12" style="text-transform: uppercase; letter-spacing: 2px; font-size: 20px; text-align: center">
+      </div>
+      <p id="acesso-msg" class="erro-msg" hidden></p>
+      <button id="btn-acesso" class="btn" type="button">Entrar</button>
+    </main>
+  </section>
+
   <!-- MENU -->
-  <section id="tela-menu" class="tela">
+  <section id="tela-menu" class="tela" hidden>
     <header class="marca"><img src="logo.png" alt="Sítio Santa Izabel"></header>
     <button id="status-sync" class="painel" type="button"></button>
     <main id="grid-modulos" class="menu"></main>
