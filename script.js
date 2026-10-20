@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v17';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v18';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -268,6 +268,7 @@ const rotuloPrio = p => ({ 'URGENTE': 'Urgente', 'ALTA': 'Alta prioridade', 'MÉ
 const FASES_REC = ['1. Indução e Botão Floral', '2. Florescimento (Antese)', '3. Frutificação', '4. Maturação e Colheita'];
 const PREVISOES_REC = ['Safra Principal (Jan - Mar)', 'Entressafra 1 (Abr - Jun)', 'Entressafra 2 (Jul - Set)', 'Tardia (Out - Dez)'];
 const NAO_MANEJO = V => !!V.aplicacao;
+const ehAdubacao = V => V.aplicacao === 'ADUBAÇÃO';
 const JUSTIFICATIVAS_REC = ['Controle Preventivo (Calendário)', 'Controle de Pragas (Monitoramento)', 'Controle de Doenças Fúngicas/Bacterianas', 'Controle de Plantas Daninhas',
   'Adubação de Produção / Manutenção', 'Adubação de Estimulação (Floração)', 'Correção de Deficiência Nutricional', 'Recomendação Baseada em Análise de Solo/Folha', 'Controle do Greening'];
 const PSI_COM_PRODUTO = /^(Sim|Repasse)/;   // controle com aplicação: pede produtos e quem aplicou
@@ -299,11 +300,14 @@ const MODULOS = [
       { t: 'info', show: () => 'O alvo da receita é o que você descreveu na avaliação técnica de cada talhão.' },
       { k: 'metodo', t: 'select', l: 'Método de aplicação', outro: true, opcoesDe: V => METODOS_REC[V.aplicacao] || [],
         padraoDe: V => ['PULVERIZAÇÃO', 'HERBICIDA', 'DRENCH'].includes(V.aplicacao) ? METODOS_REC[V.aplicacao][0] : undefined },
-      { k: 'volume', t: 'select', l: 'Volume de calda', outro: true, opts: ['4000 Litros', '2000 Litros', '1000 Litros', '400 Litros'], showIf: NAO_MANEJO },
-      { k: 'ph', t: 'number', l: 'pH', showIf: NAO_MANEJO },
-      { k: 'vazao', t: 'number', l: 'Vazão (L/ha)', showIf: NAO_MANEJO },
-      { k: 'reentrada', t: 'text', l: 'Reentrada', def: '24 Horas', ro: true, showIf: NAO_MANEJO },
-      { k: 'carencia', t: 'select', l: 'Carência', opts: ['14 Dias', '7 Dias', '6 Dias', '5 Dias', '4 Dias', '3 Dias', '2 Dias', '1 Dia', 'N/A'], showIf: NAO_MANEJO },
+      // Na adubação estes campos começam como N/A (o técnico pode editar). Nas outras aplicações começam em branco (reentrada: 24 Horas, travada).
+      { k: 'volume', t: 'select', l: 'Volume de calda', outro: true, opts: ['4000 Litros', '2000 Litros', '1000 Litros', '400 Litros', 'N/A'], showIf: NAO_MANEJO,
+        chaveDe: V => V.aplicacao, padraoDe: V => ehAdubacao(V) ? 'N/A' : undefined },
+      { k: 'ph', t: 'text', l: 'pH', decimal: true, numOuNA: true, showIf: NAO_MANEJO, preChave: V => V.aplicacao, pre: V => ehAdubacao(V) ? 'N/A' : '' },
+      { k: 'vazao', t: 'text', l: 'Vazão (L/ha)', decimal: true, numOuNA: true, showIf: NAO_MANEJO, preChave: V => V.aplicacao, pre: V => ehAdubacao(V) ? 'N/A' : '' },
+      { k: 'reentrada', t: 'text', l: 'Reentrada', showIf: NAO_MANEJO, preChave: V => V.aplicacao, pre: V => ehAdubacao(V) ? 'N/A' : '24 Horas', roDe: V => !ehAdubacao(V) },
+      { k: 'carencia', t: 'select', l: 'Carência', opts: ['14 Dias', '7 Dias', '6 Dias', '5 Dias', '4 Dias', '3 Dias', '2 Dias', '1 Dia', 'N/A'], showIf: NAO_MANEJO,
+        chaveDe: V => V.aplicacao, padraoDe: V => ehAdubacao(V) ? 'N/A' : undefined },
       { t: 'secao', l: 'Produtos', showIf: NAO_MANEJO },
       { k: 'produtos', t: 'produtos', modo: 'receita', l: 'Produtos (até 10)', showIf: NAO_MANEJO },
       { t: 'secao', l: 'Prioridade e assinatura' },
@@ -636,7 +640,7 @@ function renderCampo(f, st, ctx) {
   switch (f.t) {
     case 'text': case 'number': case 'date': case 'datetime': case 'time': case 'textarea': {
       const tipo = { text: 'text', number: 'number', date: 'date', datetime: 'datetime-local', time: 'time' }[f.t];
-      const inp = f.t === 'textarea' ? el('textarea', { rows: 4 }) : el('input', { type: tipo, autocomplete: 'off', inputmode: f.t === 'number' ? (f.inteiro ? 'numeric' : 'decimal') : null, step: f.t === 'number' ? (f.inteiro ? '1' : 'any') : null, min: f.inteiro ? '0' : null });
+      const inp = f.t === 'textarea' ? el('textarea', { rows: 4 }) : el('input', { type: tipo, autocomplete: 'off', inputmode: f.t === 'number' ? (f.inteiro ? 'numeric' : 'decimal') : (f.decimal ? 'decimal' : null), step: f.t === 'number' ? (f.inteiro ? '1' : 'any') : null, min: f.inteiro ? '0' : null });
       const v0 = f.def !== undefined ? f.def : f.now ? (f.t === 'date' ? hoje() : f.t === 'time' ? hhmm() : agora()) : '';
       inp.value = v0; st[f.k] = v0; if (f.ro) inp.readOnly = true;
       ctx.inputs[f.k] = inp;
@@ -656,9 +660,11 @@ function renderCampo(f, st, ctx) {
         else if (inp.dataset.auto === '1') { inp.value = ''; st[f.k] = ''; inp.dataset.auto = '0'; }
         inp.readOnly = !!r.ro;
       });
-      if (obrig || f.inteiro || f.positivo) checa(() => {
+      if (f.roDe) ctx.dyns.push(() => { inp.readOnly = !!f.roDe(ctx.V, st); });
+      if (obrig || f.inteiro || f.positivo || f.numOuNA) checa(() => {
         const v = String(st[f.k] ?? '').trim();
         if (v === '') return obrig ? `Preencha: ${f.l}` : null;
+        if (f.numOuNA && v !== '' && !/^n\s*\/?\s*a$/i.test(v) && numero(v) == null) return `${f.l}: digite um número ou N/A`;
         if (f.positivo && !(numero(v) > 0)) return `${f.l}: informe um número maior que zero`;
         return f.inteiro && !/^\d+$/.test(v) ? `${f.l}: use só números inteiros (sem vírgula nem ponto)` : null;
       });
@@ -687,6 +693,15 @@ function renderCampo(f, st, ctx) {
         const padrao = f.padraoDe ? f.padraoDe(ctx.V, st) : undefined;
         sel.value = lista.some(o => o.v === atual) ? atual : (padrao !== undefined ? padrao : '');
         if (sel.selectedIndex < 0) sel.value = '';
+        sync();
+      });
+      if (f.padraoDe && !f.opcoesDe) ctx.dyns.push(() => {   // valor inicial que depende de outro campo; o usuário pode trocar
+        const chave = String(f.chaveDe ? f.chaveDe(ctx.V, st) : '');
+        if (sel.dataset.chavePad === chave) return;
+        sel.dataset.chavePad = chave;
+        const p = f.padraoDe(ctx.V, st);
+        if (p !== undefined) { sel.value = p; if (sel.selectedIndex < 0) sel.value = ''; sel.dataset.autoPad = '1'; }
+        else if (sel.dataset.autoPad === '1') { sel.value = ''; sel.dataset.autoPad = '0'; }
         sync();
       });
       sel.addEventListener('change', sync); txt.addEventListener('input', sync);
@@ -1099,7 +1114,7 @@ const totalTxt = (v, un) => { un = String(un).toUpperCase(); if (un === 'ML' && 
 const doseTxt = p => p.porTalhao ? `${Object.keys(p.porTalhao).sort().map(t => `${t.replace('TALHÃO ', 'T')}: ${fmt(p.porTalhao[t].dose, 3)} ${p.unidade}`).join(' · ')} (dose por planta: ${fmt(p.dosePlanta, 3)} ${p.unidade})` : p.pes ? `${fmt(p.dose, 3)} ${p.unidade} por talhão (${fmt(p.pes)} pés × ${fmt(p.dosePlanta, 3)})` : `${fmt(p.dose, 3)} ${p.unidade}`;
 function resumoReceita(r) {
   const linhas = [`${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}  |  ${rotuloPrio(r.prioridade)}  |  prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''}`,
-    `Justificativa: ${r.justificativa}`, `Método: ${r.metodo}${r.volume ? ' · calda ' + r.volume : ''}${r.ph ? ' · pH ' + r.ph : ''}${r.vazao ? ' · vazão ' + r.vazao + ' L/ha' : ''}`];
+    `Justificativa: ${r.justificativa}`, `Método: ${r.metodo}${r.volume ? ' · calda ' + r.volume : ''}${r.ph ? ' · pH ' + r.ph : ''}${r.vazao ? ' · vazão ' + r.vazao + (/^n/i.test(r.vazao) ? '' : ' L/ha') : ''}`];
   if (r.carencia) linhas.push(`Carência: ${r.carencia} · Reentrada: ${r.reentrada || '24 Horas'}`);
   if (r.aplicacao === 'MANEJO OPERACIONAL' && r.dataRealizacao) linhas.push(`Realizar em: ${fmtData(r.dataRealizacao)} ${String(r.dataRealizacao).slice(11, 16)}`);
   const vistos = new Set();
