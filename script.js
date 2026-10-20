@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v16';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v17';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -251,6 +251,9 @@ const padraoDestino = (V, campo) => (DESTINOS[String(V.destino || '').trim().toU
 const somaCaixas = itens => Object.values(itens || {}).reduce((t, o) => t + (parseInt(o.qtd, 10) || 0), 0);
 
 // ---- receita do técnico e aplicação ----
+// pés de cada talhão (o servidor manda os valores do Code.gs; estes são o reserva para quando estiver sem sinal)
+const PES_PADRAO = { 'TALHÃO 1': 7487, 'TALHÃO 2': 4167, 'TALHÃO 3': 2200, 'TALHÃO 4': 4460 };
+const pesDe = t => ((S.dados && S.dados.pesTalhao) || PES_PADRAO)[t] || 0;
 const TRATORES = ['TR05', 'TR10', 'TR20 MASSEY GERGUSON 4275 - TRAÇADO 4X4', 'TR21 MASSEY GERGUSON 4275 - SIMPLES', 'TR22 NEW HOLLAND TL 5.80'];
 const APLICACOES_REC = ['PULVERIZAÇÃO', 'ADUBAÇÃO', 'HERBICIDA', 'DRENCH'];   // o manejo operacional é lançado só pelo aplicador
 const METODOS_REC = {
@@ -798,11 +801,10 @@ function renderProdutos(f, st, ctx, w, rotulo, checa) {
     ...(rec ? [{ k: 'concentracao', t: 'text', l: 'Concentração (ex.: 18 EC, 250 g/L)', preChave: (V, s) => s.id,
       pre: (V, E, s) => { const p = S.dados.produtos.find(x => x.id === s.id); return p ? p.concentracao : ''; } }] : []),
     { k: 'dosagem', t: 'number', l: rec ? 'Dosagem (por bomba)' : 'Dosagem', showIf: pulv },
-    { k: 'pes', t: 'select', l: 'Quantidade de pés', opts: ['7500', '4200', '2200'], showIf: adub },
     { k: 'dosePlanta', t: 'number', l: 'Dose por planta', showIf: adub },
     { k: 'unidade', t: 'select', l: 'Unidade', opts: UNID },
     ...(psi ? [{ k: 'datahora', t: 'datetime', l: 'Data e hora da aplicação', now: true }] : []),
-    { t: 'info', show: (V, s) => adub(V) && numero(s.pes) && numero(s.dosePlanta) ? `Dose por talhão: ${fmt(numero(s.pes) * numero(s.dosePlanta), 3)} ${s.unidade || ''}` : '' }
+    { t: 'info', show: (V, s) => adub(V) && numero(s.dosePlanta) > 0 ? 'Dose de cada talhão (pés × dose por planta):\n' + Object.keys(V.talhoes || {}).sort().map(t => `${t}: ${fmt(pesDe(t))} pés → ${fmt(pesDe(t) * numero(s.dosePlanta), 3)} ${s.unidade || ''}`).join('\n') : '' }
   ];
   const numerar = () => { cont.querySelectorAll('.prod-topo strong').forEach((s, i) => { s.textContent = `Produto ${i + 1}`; }); btnAdd.hidden = lista.length >= 10; };
   function novo() {
@@ -1094,7 +1096,7 @@ function equivalentes(p) {
   return lista;
 }
 const totalTxt = (v, un) => { un = String(un).toUpperCase(); if (un === 'ML' && v >= 1000) return `${fmt(v / 1000, 3)} L`; if (un === 'G' && v >= 1000) return `${fmt(v / 1000, 3)} KG`; return `${fmt(v, 3)} ${un}`; };
-const doseTxt = p => p.pes ? `${fmt(p.dose, 3)} ${p.unidade} por talhão (${fmt(p.pes)} pés × ${fmt(p.dosePlanta, 3)})` : `${fmt(p.dose, 3)} ${p.unidade}`;
+const doseTxt = p => p.porTalhao ? `${Object.keys(p.porTalhao).sort().map(t => `${t.replace('TALHÃO ', 'T')}: ${fmt(p.porTalhao[t].dose, 3)} ${p.unidade}`).join(' · ')} (dose por planta: ${fmt(p.dosePlanta, 3)} ${p.unidade})` : p.pes ? `${fmt(p.dose, 3)} ${p.unidade} por talhão (${fmt(p.pes)} pés × ${fmt(p.dosePlanta, 3)})` : `${fmt(p.dose, 3)} ${p.unidade}`;
 function resumoReceita(r) {
   const linhas = [`${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}  |  ${rotuloPrio(r.prioridade)}  |  prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''}`,
     `Justificativa: ${r.justificativa}`, `Método: ${r.metodo}${r.volume ? ' · calda ' + r.volume : ''}${r.ph ? ' · pH ' + r.ph : ''}${r.vazao ? ' · vazão ' + r.vazao + ' L/ha' : ''}`];
@@ -1119,7 +1121,7 @@ function moduloAplicar(r) {
   if (!manejo) {
     campos.push({ t: 'secao', l: '1. Confirme os produtos' });
     r.produtos.forEach((p, i) => campos.push(
-      { t: 'info', show: () => `Produto ${i + 1} da receita: ${p.nome}\nPrincípio ativo: ${p.principio || '-'} · Concentração: ${p.concentracao}\nDose: ${doseTxt(p)}${p.pes ? '' : ' por bomba'}` },
+      { t: 'info', show: () => `Produto ${i + 1} da receita: ${p.nome}\nPrincípio ativo: ${p.principio || '-'} · Concentração: ${p.concentracao}\nDose: ${doseTxt(p)}${p.pes || p.porTalhao ? '' : ' por bomba'}` },
       { k: 'prod' + i, t: 'select', l: `Produto usado (${i + 1})`, def: p.id, opts: () => equivalentes(p) }));
   }
   campos.push({ t: 'secao', l: manejo ? 'Onde foi feito' : '2. Onde foi aplicado' },
