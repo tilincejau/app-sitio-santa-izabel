@@ -197,3 +197,10 @@ select + input[type=text] { margin-top: 8px; border-style: dashed; }
 .croqui-txt { fill: #41503f; font: 600 10px system-ui, sans-serif; }
 .croqui-escala { stroke: #41503f; stroke-width: 3; }
 .croqui-norte { fill: none; stroke: #41503f; stroke-width: 2; }
+
+/* menu por seção */
+.menu-secao { margin-top: 6px; }
+.menu-titulo { display: flex; align-items: center; gap: 10px; margin: 18px 16px 0; font-size: 14px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; color: var(--verde); }
+.menu-num { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--verde); color: #fff; font-size: 13px; }
+.menu-secao .menu { padding-bottom: 4px; }
+.menu-secoes .versao { padding: 18px 16px 28px; }
