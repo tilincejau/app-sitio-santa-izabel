@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v22';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v23';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -391,17 +391,17 @@ const MODULOS = [
     // a leitura salva passa a ser a "leitura anterior" na hora (mesmo sem internet)
     aoSalvar: V => {
       const E = S.dados.estado = S.dados.estado || {}; E.tensio = E.tensio || {};
-      Object.keys(V.itens || {}).forEach(t => [20, 40].forEach(p => { const l = numero(V.itens[t]['l' + p]); if (l != null) E.tensio[`${t}|${p}`] = { data: String(V.datahora), leitura: l }; }));
+      Object.keys(V.itens || {}).forEach(t => [20, 40].forEach(p => { const l = normTensio(V.itens[t]['l' + p]); if (l != null) E.tensio[`${t}|${p}`] = { data: String(V.datahora), leitura: l }; }));
       try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
     },
     campos: [
-      { t: 'info', show: () => 'Leia os dois tensiômetros de cada talhão (20 cm e 40 cm) e digite o que o ponteiro marca, em centibares (cb).\nQuanto MAIOR a leitura, mais seco está o solo. Quanto menor, mais úmido.' },
+      { t: 'info', show: () => 'Leia os dois tensiômetros de cada talhão (20 cm e 40 cm) e digite o que o ponteiro marca, em kPa.\nO mostrador vai de 0 a −100: pode digitar com ou sem o sinal de menos (20 vale −20).\nQuanto mais NEGATIVA a leitura, mais seco está o solo.' },
       { k: 'datahora', t: 'datetime', l: 'Data e hora da leitura', now: true },
       { k: 'itens', t: 'multi', l: 'Talhão (pode escolher vários)', opts: TALHOES, subTitle: v => v,
         sub: [
-          { k: 'l20', t: 'number', l: 'Leitura de 20 cm (cb)', minimo: 0 },
+          { k: 'l20', t: 'number', l: 'Leitura de 20 cm (kPa)', maxAbs: 100 },
           { t: 'info', show: (V, s, E) => infoTensio(s, E, 20, 'l20') },
-          { k: 'l40', t: 'number', l: 'Leitura de 40 cm (cb)', minimo: 0 },
+          { k: 'l40', t: 'number', l: 'Leitura de 40 cm (kPa)', maxAbs: 100 },
           { t: 'info', show: (V, s, E) => infoTensio(s, E, 40, 'l40') }
         ] },
       resp(), assin()
@@ -726,10 +726,11 @@ function renderCampo(f, st, ctx) {
         inp.readOnly = !!r.ro;
       });
       if (f.roDe) ctx.dyns.push(() => { inp.readOnly = !!f.roDe(ctx.V, st); });
-      if (obrig || f.inteiro || f.positivo || f.numOuNA || f.minimo != null) checa(() => {
+      if (obrig || f.inteiro || f.positivo || f.numOuNA || f.minimo != null || f.maxAbs != null) checa(() => {
         const v = String(st[f.k] ?? '').trim();
         if (v === '') return obrig ? `Preencha: ${f.l}` : null;
         if (f.numOuNA && v !== '' && !/^n\s*\/?\s*a$/i.test(v) && numero(v) == null) return `${f.l}: digite um número ou N/A`;
+        if (f.maxAbs != null && v !== '' && !(Math.abs(numero(v)) <= f.maxAbs)) return `${f.l}: a escala do mostrador vai de 0 a −${f.maxAbs}`;
         if (f.minimo != null && v !== '' && !(numero(v) >= f.minimo)) return `${f.l}: use um número a partir de ${f.minimo}`;
         if (f.positivo && !(numero(v) > 0)) return `${f.l}: informe um número maior que zero`;
         return f.inteiro && !/^\d+$/.test(v) ? `${f.l}: use só números inteiros (sem vírgula nem ponto)` : null;
@@ -982,14 +983,18 @@ function abrirModulo(m) {
 
 
 
+// O mostrador do tensiômetro só tem valores negativos (0 a -100 kPa): a leitura vale com ou sem o sinal de menos.
+const normTensio = v => { const n = numero(v); return n == null ? null : (n === 0 ? 0 : -Math.abs(n)); };
+const kpaTxt = n => (n < 0 ? '−' : '') + fmt(Math.abs(n));
 // leitura anterior e variação (+ ou -) do tensiômetro de um talhão, como no hidrômetro
 function infoTensio(s, E, prof, chave) {
-  const prev = (E.tensio || {})[`${s.__opt}|${prof}`];
-  if (!prev) return `${prof} cm: primeira leitura deste tensiômetro.`;
-  const base = `${prof} cm · leitura anterior: ${fmt(prev.leitura)} cb em ${fmtData(prev.data)} ${String(prev.data).slice(11, 16)}`;
-  const l = numero(s[chave]); if (l == null) return base;
-  const v = Math.round((l - prev.leitura) * 10) / 10;
-  return `${base}\nVariação: ${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v))} cb${v > 0 ? ' (solo mais seco)' : v < 0 ? ' (solo mais úmido)' : ' (sem mudança)'}`;
+  const ant = (E.tensio || {})[`${s.__opt}|${prof}`];
+  if (!ant) return `${prof} cm: primeira leitura deste tensiômetro.`;
+  const prev = normTensio(ant.leitura);   // leituras antigas guardadas sem o sinal também valem como negativas
+  const base = `${prof} cm · leitura anterior: ${kpaTxt(prev)} kPa em ${fmtData(ant.data)} ${String(ant.data).slice(11, 16)}`;
+  const l = normTensio(s[chave]); if (l == null) return base;
+  const v = Math.round((l - prev) * 10) / 10;
+  return `${base}\nVariação: ${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v))} kPa${v < 0 ? ' (solo mais seco)' : v > 0 ? ' (solo mais úmido)' : ' (sem mudança)'}`;
 }
 
 /* =========================================================
