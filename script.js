@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v18';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v19';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -160,7 +160,7 @@ async function atualizarDados() {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
     if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo.'); return; }
-    if (r.sucesso) { S.dados = r; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); }
+    if (r.sucesso) { S.dados = r; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); S.dados.lavagens = await ajustarLavagensComFila(S.dados.lavagens || []); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
@@ -225,7 +225,7 @@ function mostrar(id) {
   window.scrollTo(0, 0);
   if (typeof renderAlertaReceitas === 'function') renderAlertaReceitas();
 }
-function irMenu() { mostrar('tela-menu'); renderStatus(); }
+function irMenu() { mostrar('tela-menu'); montarMenu(); renderStatus(); }   // refaz o menu: os avisos (receitas, lavagem) mudam enquanto o app está aberto
 
 function iniciarApp() {
   if (!S.codigo) { pedirAcesso(); return; }
@@ -371,10 +371,17 @@ const MODULOS = [
     campos: [{ k: 'datahora', t: 'datetime', l: 'Data e hora', now: true }, { k: 'leitura', t: 'number', l: 'Leitura (mm)' }, resp(), assin()] },
 
   { id: 'hidrorepelente', nome: 'Hidrorrepelente (lavagem EPI)', icone: 'ph-shield-check',
+    validar: V => { const l = lavagemSel(V); return l && V.resp !== l.aplicador ? `A lavagem precisa ser de ${l.aplicador}, que fez a aplicação.` : null; },
+    aoSalvar: V => { if (V.refExec) S.dados.lavagens = lavagens().filter(l => l.idExec !== V.refExec); renderAlertaReceitas(); },
     campos: [
-      { k: 'data', t: 'date', l: 'Data da lavagem', now: true },
-      { k: 'talhao', t: 'select', l: 'Talhão', opts: ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3', 'TALHÃO 4'] },
-      resp(),
+      // Depois de cada aplicação a lavagem é obrigatória: o app puxa o fim da aplicação (data, talhão e quem aplicou) e trava a data.
+      { k: 'refExec', t: 'select', l: 'Aplicação que terminou (lavagem obrigatória)', opt: true, showIf: () => lavagens().length > 0,
+        opts: () => lavagens().map(l => ({ v: l.idExec, l: rotuloLavagem(l) })),
+        chaveDe: () => 'inicio', padraoDe: () => { const l = lavagensDoUsuario()[0] || lavagens()[0]; return l ? l.idExec : undefined; } },
+      { t: 'info', show: V => { const l = lavagemSel(V); return l ? `Fim da aplicação: ${fmtData(l.data)} ${String(l.fim).slice(11, 16)}. A lavagem entra com esta data e com o mesmo aplicador.` : (lavagens().length ? 'Sem aplicação escolhida: lavagem avulsa, com a data que você informar.' : ''); } },
+      { k: 'data', t: 'date', l: 'Data da lavagem', now: true, preChave: V => V.refExec, pre: V => { const l = lavagemSel(V); return l ? l.data : hoje(); }, roDe: V => !!lavagemSel(V) },
+      { k: 'talhao', t: 'select', l: 'Talhão', opts: ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3', 'TALHÃO 4'], chaveDe: V => V.refExec, padraoDe: V => (lavagemSel(V) || {}).talhao },
+      { ...resp(), chaveDe: V => V.refExec, padraoDe: V => (lavagemSel(V) || {}).aplicador },
       { t: 'info', show: (V, s, E) => {
         if (!V.resp) return ''; const h = (E.hidrorep || {})[V.resp];
         const conj = h && h.conjunto === 'Conjunto 1' ? 'Conjunto 2' : 'Conjunto 1';
@@ -872,7 +879,7 @@ function montarForm(m, container, onSalvo) {
     const payload = { acao: 'salvar', modulo: m.id, id_transacao: id, dados: JSON.parse(JSON.stringify(ctx.V)), novasListas: ctx.persist.map(f => f()).filter(Boolean) };
     if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: m.nome, fp }))) { btn.disabled = false; return; }
     (payload.novasListas).forEach(n => { const l = S.dados.listas[n.lista] = S.dados.listas[n.lista] || []; if (!l.includes(n.valor)) l.push(n.valor); });
-    if (m.aoSalvar) { try { m.aoSalvar(ctx.V); } catch (e) {} }
+    if (m.aoSalvar) { try { m.aoSalvar(ctx.V, id); } catch (e) {} }
     toast('Guardado no celular ✔ Envia sozinho quando tiver internet');
     onSalvo(); sincronizar();
   };
@@ -883,6 +890,7 @@ function montarForm(m, container, onSalvo) {
 
 /* ---------- navegação dos módulos ---------- */
 function ultimoTexto(m) {
+  if (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length) { const n = lavagensDoUsuario().length; return `${n} ${n === 1 ? 'lavagem pendente' : 'lavagens pendentes'}`; }
   if (m.id === 'receitas_abertas') { const n = (S.dados.receitas || []).length; return n ? `${n} em aberto` : 'Nenhuma em aberto'; }
   if (m.id === 'aplicar') { const n = (S.dados.receitas || []).length; return n ? `${n} ${n === 1 ? 'receita' : 'receitas'} para aplicar` : 'Nenhuma receita aberta'; }
   if (m.id === 'estoque') { const n = (S.dados.estoque || []).length; return n ? (n === 1 ? '1 produto' : `${n} produtos`) : ''; }
@@ -894,7 +902,7 @@ function montarMenu() {
   renderAlertaReceitas();
   const g = $('#grid-modulos'); g.replaceChildren();
   MODULOS.filter(m => !(['receita', 'receitas_abertas'].includes(m.id) && S.perfil === 'aplicador') && !(m.id === 'manejo' && S.perfil === 'tecnico'))
-    .forEach(m => g.append(el('button', { class: 'mod' + (m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length ? ' alerta' : ''), onclick: () => abrirModulo(m) },
+    .forEach(m => g.append(el('button', { class: 'mod' + classeAlertaModulo(m), onclick: () => abrirModulo(m) },
     el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)))));
   g.append(el('p', { class: 'versao' }, `Versão ${APP_VERSAO}${S.nome ? ' · ' + S.nome : ''} · `,
     el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: atualizarListas }, 'atualizar listas'), ' · ',
@@ -912,6 +920,76 @@ function abrirModulo(m) {
 }
 
 
+
+/* =========================================================
+   LAVAGEM DA ROUPA (hidrorrepelente) depois de cada aplicação
+   ========================================================= */
+const lavagens = () => S.dados.lavagens || [];
+const lavagemSel = V => lavagens().find(l => l.idExec === V.refExec);
+const lavagensDe = aplicador => lavagens().filter(l => l.aplicador === aplicador);
+const lavagensDoUsuario = () => lavagens().filter(l => S.nome && normTxt(l.aplicador).includes(normTxt(S.nome)));   // "Ocimar" casa com "OCIMAR DONIZETE ZANIBONI"
+const rotuloLavagem = l => `${l.aplicador.split(' ')[0]} · ${String(l.aplicacao).toLowerCase()} · fim ${fmtData(l.data)} ${String(l.fim).slice(11, 16)} · ${l.talhoes.map(t => t.replace('TALHÃO ', 'T')).join(', ')}`;
+const moduloHidrorep = () => MODULOS.find(m => m.id === 'hidrorepelente');
+
+// pendência montada a partir de uma aplicação que ainda não saiu do celular (o servidor só a conhece depois do envio)
+function lavagemDeEnvio(dados, idTransacao) {
+  if (!dados || !dados.aplicador || !dados.tipoAplicacao || dados.tipoAplicacao === 'MANEJO OPERACIONAL') return null;
+  const pares = [];
+  Object.keys(dados.itens || {}).forEach(t => Object.keys((dados.itens[t] || {}).areas || {}).forEach(a => { const p = dados.itens[t].areas[a]; pares.push({ talhao: t, fim: p.fim || p.inicio }); }));
+  if (!pares.length) return null;
+  const ult = pares.reduce((m, p) => String(p.fim) > String(m.fim) ? p : m);
+  return { idExec: 'local:' + idTransacao, aplicador: dados.aplicador, aplicacao: dados.tipoAplicacao, fim: ult.fim, data: String(ult.fim).slice(0, 10), talhao: ult.talhao, talhoes: [...new Set(pares.map(p => p.talhao))].sort() };
+}
+// a lista vem do servidor; o que está na fila do celular (aplicações e lavagens ainda não enviadas) é aplicado por cima
+async function ajustarLavagensComFila(lista) {
+  const fila = await DB.todos();
+  fila.forEach(i => {
+    if (i.status === 'erro' || !i.payload || i.payload.modulo !== 'aplicacao_execucao') return;
+    const l = lavagemDeEnvio(i.payload.dados, i.payload.id_transacao);
+    if (l && !lista.some(x => x.idExec === l.idExec)) lista.push(l);
+  });
+  fila.forEach(i => {
+    if (i.status === 'erro' || !i.payload || i.payload.modulo !== 'hidrorepelente' || !i.payload.dados.refExec) return;
+    const k = lista.findIndex(x => x.idExec === i.payload.dados.refExec); if (k >= 0) lista.splice(k, 1);
+  });
+  return lista;
+}
+
+function renderAlertaLavagem() {
+  const box = $('#alerta-lavagem'); if (!box) return;
+  const pend = recebeAviso() ? lavagensDoUsuario() : [];
+  if (!pend.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.replaceChildren(el('span', { class: 'alerta-txt' },
+    el('b', {}, pend.length > 1 ? `${pend.length} lavagens da roupa pendentes` : 'Lave a roupa e lance a lavagem'),
+    el('small', {}, `${rotuloLavagem(pend[0])}. Sem isso, não dá para lançar outra aplicação.`)),
+    el('span', { class: 'prio' }, 'Obrigatória'));
+}
+function lembrarLavagem(l) {
+  const modal = $('#aviso-lavagem'); if (!modal || !l) return;
+  const fechar = () => { modal.hidden = true; modal.replaceChildren(); };
+  modal.className = 'modal-rec prio-0';
+  modal.replaceChildren(el('div', { class: 'cx' },
+    el('span', { class: 'prio grande-prio' }, 'Obrigatória'),
+    el('h2', {}, 'Lembrete: lave a roupa'),
+    el('p', { class: 'cx-linha' }, el('b', {}, `${l.aplicacao} terminada em ${fmtData(l.data)} às ${String(l.fim).slice(11, 16)}`)),
+    el('p', { class: 'cx-sub' }, 'Lance a lavagem do hidrorrepelente com a data do fim da aplicação. Enquanto não lançar, o app não deixa começar outra aplicação.'),
+    el('button', { type: 'button', class: 'btn', onclick: () => { fechar(); abrirModulo(moduloHidrorep()); } }, 'Lançar a lavagem agora'),
+    el('button', { type: 'button', class: 'btn sec', onclick: fechar }, 'Depois')));
+  modal.hidden = false; bip(); if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+}
+function mostrarBloqueioLavagem(l) {
+  mostrar('tela-form'); S.tela = 'lavagem-bloqueio'; $('#form-titulo').textContent = 'Lavagem pendente'; $('#form-ultimos').hidden = true;
+  $('#form-root').replaceChildren(
+    el('div', { class: 'cartao erro' },
+      el('strong', {}, 'Antes de uma nova aplicação, lance a lavagem da roupa'),
+      el('p', {}, rotuloLavagem(l)),
+      el('p', { class: 'sub' }, 'A lavagem do hidrorrepelente entra com a data do fim da última aplicação.'),
+      el('button', { type: 'button', class: 'btn', onclick: () => abrirModulo(moduloHidrorep()) }, 'Lançar a lavagem agora')),
+    el('button', { type: 'button', class: 'link', onclick: abrirAplicar }, '← Voltar às receitas'));
+}
+const classeAlertaModulo = m => ((m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length) || (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length)) ? ' alerta' : '';
+
 /* =========================================================
    RECEITA (técnico) E APLICAÇÃO (aplicador)
    ========================================================= */
@@ -923,6 +1001,7 @@ function marcarReceitasVistas() { try { localStorage.setItem('sitio_receitas_vis
 
 // faixa no topo do menu: avisa que há receita e mostra a prioridade
 function renderAlertaReceitas() {
+  renderAlertaLavagem();
   const lista = receitasOrdenadas(), vistas = receitasVistas(), novas = lista.filter(r => !vistas.includes(r.id)), topo = lista[0];
   document.title = lista.length && recebeAviso() ? `(${lista.length}) Sítio Santa Izabel` : 'Sítio Santa Izabel';   // o número aparece até na aba do navegador
   if (!recebeAviso()) { const b = $('#alerta-receitas'), sn = $('#sino-receitas'); if (b) b.hidden = true; if (sn) sn.hidden = true; return; }
@@ -1017,6 +1096,7 @@ async function atualizarReceitas() {
     if (!r.sucesso) return;
     const lista = r.receitas || [];
     await descontarFilaReceitas(lista);
+    if (Array.isArray(r.lavagens)) S.dados.lavagens = await ajustarLavagensComFila(r.lavagens.slice());
     const antes = receitasAnteriores; receitasAnteriores = lista.map(x => x.id);
     S.dados.receitas = lista;
     try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
@@ -1078,6 +1158,8 @@ function abrirAplicar() {
   const root = $('#form-root'); root.replaceChildren();
   const lista = receitasOrdenadas();
   if (!lista.length) { root.append(el('p', { class: 'sub' }, 'Nenhuma receita para aplicar agora. Quando o técnico lançar uma, ela aparece aqui e o aviso surge no menu.')); return; }
+  if (lavagensDoUsuario().length) root.append(el('div', { class: 'cartao erro' }, el('strong', {}, 'Lavagem da roupa pendente'), el('p', {}, rotuloLavagem(lavagensDoUsuario()[0])),
+    el('button', { type: 'button', class: 'btn', onclick: () => abrirModulo(moduloHidrorep()) }, 'Lançar a lavagem agora')));
   root.append(el('p', { class: 'sub' }, 'Toque na receita que você vai aplicar. As mais urgentes ficam no topo.'));
   lista.forEach(r => {
     const talh = [...new Set(r.pendentes.map(p => p.talhao.replace('TALHÃO ', '')))].join(', ');
@@ -1089,6 +1171,7 @@ function abrirAplicar() {
   });
 }
 function abrirReceita(r) {
+  if (r.aplicacao !== 'MANEJO OPERACIONAL' && lavagensDoUsuario().length) return mostrarBloqueioLavagem(lavagensDoUsuario()[0]);   // lavar a roupa antes de nova aplicação
   mostrar('tela-form'); S.tela = 'aplicar-receita'; $('#form-ultimos').hidden = true;
   marcaVista(r.id);
   const root = $('#form-root'); $('#form-titulo').textContent = r.id;
@@ -1130,6 +1213,7 @@ function moduloAplicar(r) {
   const areasDe = t => r.pendentes.filter(p => p.talhao === t).map(p => p.area);
   const campos = [
     { k: 'idReceita', t: 'text', l: 'Receita', def: r.id, ro: true, showIf: () => false },
+    { k: 'tipoAplicacao', t: 'text', l: 'Aplicação', def: r.aplicacao, ro: true, showIf: () => false },
     { t: 'secao', l: r.id },
     { t: 'info', show: () => resumoReceita(r) }
   ];
@@ -1165,7 +1249,15 @@ function moduloAplicar(r) {
   campos.push({ t: 'secao', l: 'Fechamento' },
     { k: 'aplicador', t: 'select', l: 'Aplicador', opts: RESP },
     { k: 'assinatura', t: 'assinatura', l: 'Assinatura do aplicador' });
-  return { id: 'aplicacao_execucao', nome: 'Aplicação ' + r.id, campos, aoSalvar: V => { descontarPares(S.dados.receitas, V); renderAlertaReceitas(); } };
+  return { id: 'aplicacao_execucao', nome: 'Aplicação ' + r.id, campos,
+    // quem tem lavagem da roupa pendente não lança outra aplicação
+    validar: V => { if (manejo) return null; const p = lavagensDe(V.aplicador); return p.length ? `${V.aplicador.split(' ')[0]} tem lavagem da roupa pendente (${rotuloLavagem(p[0])}). Lance a lavagem no Hidrorrepelente antes de uma nova aplicação.` : null; },
+    aoSalvar: (V, idTransacao) => {
+      descontarPares(S.dados.receitas, V);
+      const l = manejo ? null : lavagemDeEnvio(V, idTransacao);   // a lavagem passa a ser obrigatória
+      if (l) { S.dados.lavagens = [...lavagens().filter(x => x.idExec !== l.idExec), l]; setTimeout(() => lembrarLavagem(l), 600); }
+      renderAlertaReceitas();
+    } };
 }
 
 /* ---------- estoque ---------- */
@@ -1385,6 +1477,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('online', () => atualizarReceitas());
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') atualizarReceitas(); });
   $('#alerta-receitas').onclick = () => abrirAplicar();
+  $('#alerta-lavagem').onclick = () => abrirModulo(moduloHidrorep());
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});   // permite abrir o app sem internet
   iniciarApp();
