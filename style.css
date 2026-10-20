@@ -180,3 +180,20 @@ select + input[type=text] { margin-top: 8px; border-style: dashed; }
 @media (prefers-reduced-motion: reduce) { .modal-rec .cx { animation: none; } }
 .sino { position: fixed; left: 12px; bottom: 14px; z-index: 40; max-width: calc(100vw - 24px); padding: 12px 16px; border: 0; border-radius: 999px; color: #fff; font: inherit; font-size: 14px; font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,.3); cursor: pointer; }
 .sino[hidden] { display: none; }
+
+/* diesel */
+.diesel-card { margin-top: 12px; padding: 22px 18px; border-radius: 18px; text-align: center; color: #fff; background: #1c6b36; box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+.diesel-card.nivel-amarelo { background: #f2c230; color: #3a2b00; }
+.diesel-card.nivel-vermelho { background: #b42318; }
+.diesel-num { font-size: 44px; font-weight: 900; line-height: 1.05; }
+.diesel-msg { margin: 8px 0 10px; font-size: 16px; font-weight: 700; }
+.diesel-card small { display: block; opacity: .9; font-size: 13px; }
+.btn.zap { display: block; margin-top: 10px; text-align: center; text-decoration: none; background: #25d366; color: #073b1c; font-weight: 800; }
+/* croqui do mapa das armadilhas */
+.croqui { width: 100%; height: auto; margin: 12px 0; }
+.croqui-fundo { fill: #eef3ea; stroke: #cdd8c4; stroke-width: 1.5; }
+.croqui-ponto { fill: #1c6b36; stroke: #fff; stroke-width: 2; }
+.croqui-num { fill: #fff; font: 700 11px system-ui, sans-serif; }
+.croqui-txt { fill: #41503f; font: 600 10px system-ui, sans-serif; }
+.croqui-escala { stroke: #41503f; stroke-width: 3; }
+.croqui-norte { fill: none; stroke: #41503f; stroke-width: 2; }
