@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v21';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v22';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -66,6 +66,8 @@ const ICONES = {
   'clipboard': '<path d="M9 4h6v3H9zM7 5.5H5.5v15h13v-15H17"/><path d="M9 12h6M9 16h4"/>',
   'list-check': '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
   'tractor': '<circle cx="7" cy="16.5" r="3.6"/><circle cx="18.6" cy="17.6" r="2.2"/><path d="M3.5 13V8h5.4l1.8 4.3H16V6h2.2v9.4"/><path d="M10.6 16.5h5.8"/>',
+  'tensiometro': '<circle cx="12" cy="7.5" r="4.5"/><path d="M12 7.5l2.2-1.8"/><path d="M12 12v8.5M10 20.5h4"/><path d="M9.2 16h2.8"/>',
+  'map': '<path d="M9 4L3.5 6v14L9 18l6 2 5.5-2V4L15 6 9 4z"/><path d="M9 4v14M15 6v14"/>',
   'caret': '<path d="M9 6l6 6-6 6"/>'
 };
 function ico(nome) {
@@ -160,7 +162,7 @@ async function atualizarDados() {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
     if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo.'); return; }
-    if (r.sucesso) { S.dados = r; S.dadosFrescos = true; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); S.dados.lavagens = await ajustarLavagensComFila(S.dados.lavagens || []); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); verificarAvisoHidrometro(); }
+    if (r.sucesso) { S.dados = r; S.dadosFrescos = true; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); S.dados.lavagens = await ajustarLavagensComFila(S.dados.lavagens || []); S.dados.diesel = await dieselComFila(S.dados.diesel); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); verificarAvisoHidrometro(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
@@ -242,6 +244,14 @@ function iniciarApp() {
    Todo campo é obrigatório, exceto com opt:true.  ro:true = só leitura.  def = valor inicial.
    showIf(V, store) mostra/esconde.  outro:true acrescenta "Outro (digitar)".  persist:'lista' guarda o "Outro" para a próxima vez.
    ========================================================= */
+const TALHOES = ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3', 'TALHÃO 4'];
+const talhaoDe = up => String(up || '').split(',')[0].trim().toUpperCase();   // "TALHÃO 1, ÁREA A" -> "TALHÃO 1"
+// Área e armadilhas de cada talhão (o servidor manda os mesmos valores; estes são o reserva sem sinal)
+const TALHOES_INFO_PADRAO = { 'TALHÃO 1': { ha: 14.55, armadilhas: 2 }, 'TALHÃO 2': { ha: 8.13, armadilhas: 1 }, 'TALHÃO 3': { ha: 6.16, armadilhas: 1 }, 'TALHÃO 4': { ha: 12.52, armadilhas: 2 } };
+const infoTalhao = up => ((S.dados && S.dados.talhoesInfo) || TALHOES_INFO_PADRAO)[talhaoDe(up)] || {};
+const coordFixa = up => ((S.dados && S.dados.coordsBF) || {})[talhaoDe(up)];   // a 1ª coordenada capturada do talhão
+const UPS_EXPEDICAO = ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2', 'TALHÃO 3', 'TALHÃO 4'];   // só o talhão 1 tem área A e B
+const HORARIOS_IRRIG = { 'TALHÃO 1': ['22:00', '06:00'], 'TALHÃO 2': ['22:00', '02:00'], 'TALHÃO 3': ['02:00', '04:00'] };   // o usuário pode editar; talhão 4 ainda sem horário
 const UPS = ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B', 'TALHÃO 4, ÁREA A', 'TALHÃO 4, ÁREA B'];
 const DESTINOS = {   // destinos padrão: preenchem cidade e CPF/CNPJ (que podem ser editados)
   FRUTATA: { cidade: 'Area Rural, SN - KM 19, Area Rural de Itapolis CEP 14907-899, Itapolis/SP', doc: '63.293.267/0001-34' },
@@ -279,6 +289,8 @@ const assin = () => ({ k: 'assinatura', t: 'assinatura', l: 'Assinatura' });
 const parseDH = s => { const d = new Date(s); return isNaN(d) ? null : d; };
 
 const MODULOS = [
+  { id: 'mapa_bf', nome: 'Mapa das armadilhas', icone: 'ph-map', custom: () => abrirMapaBF() },
+
   { id: 'receita', nome: 'Visita técnica (receita)', icone: 'ph-clipboard',
     campos: [
       { t: 'secao', l: 'Visita técnica' },
@@ -364,12 +376,33 @@ const MODULOS = [
       { k: 'itens', t: 'multi', l: 'Área (pode escolher várias)', subTitle: v => v,
         opts: UPS,
         sub: [
-          { k: 'inicio', t: 'time', l: 'Início (hora)' },
-          { k: 'fim', t: 'time', l: 'Final (hora)' },
+          { k: 'inicio', t: 'time', l: 'Início (hora)', preChave: (V, s) => s.__opt, pre: (V, E, s) => (HORARIOS_IRRIG[talhaoDe(s.__opt)] || [])[0] || '' },
+          { k: 'fim', t: 'time', l: 'Final (hora)', preChave: (V, s) => s.__opt, pre: (V, E, s) => (HORARIOS_IRRIG[talhaoDe(s.__opt)] || [])[1] || '' },
+          { t: 'info', show: (V, s) => HORARIOS_IRRIG[talhaoDe(s.__opt)] ? 'Horário do talhão já preenchido. Pode editar.' : 'Horário deste talhão ainda não definido: digite o início e o final.' },
           { t: 'info', show: (V, s) => {
             const i = minutos(s.inicio), f = minutos(s.fim); if (i == null || f == null) return '';
             let d = f - i; if (d < 0) d += 1440; return `Tempo de irrigação: ${pad2(Math.floor(d / 60))}h${pad2(d % 60)}`;
           } }
+        ] },
+      resp(), assin()
+    ] },
+
+  { id: 'tensiometro', nome: 'Tensiômetro', icone: 'ph-tensiometro',
+    // a leitura salva passa a ser a "leitura anterior" na hora (mesmo sem internet)
+    aoSalvar: V => {
+      const E = S.dados.estado = S.dados.estado || {}; E.tensio = E.tensio || {};
+      Object.keys(V.itens || {}).forEach(t => [20, 40].forEach(p => { const l = numero(V.itens[t]['l' + p]); if (l != null) E.tensio[`${t}|${p}`] = { data: String(V.datahora), leitura: l }; }));
+      try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+    },
+    campos: [
+      { t: 'info', show: () => 'Leia os dois tensiômetros de cada talhão (20 cm e 40 cm) e digite o que o ponteiro marca, em centibares (cb).\nQuanto MAIOR a leitura, mais seco está o solo. Quanto menor, mais úmido.' },
+      { k: 'datahora', t: 'datetime', l: 'Data e hora da leitura', now: true },
+      { k: 'itens', t: 'multi', l: 'Talhão (pode escolher vários)', opts: TALHOES, subTitle: v => v,
+        sub: [
+          { k: 'l20', t: 'number', l: 'Leitura de 20 cm (cb)', minimo: 0 },
+          { t: 'info', show: (V, s, E) => infoTensio(s, E, 20, 'l20') },
+          { k: 'l40', t: 'number', l: 'Leitura de 40 cm (cb)', minimo: 0 },
+          { t: 'info', show: (V, s, E) => infoTensio(s, E, 40, 'l40') }
         ] },
       resp(), assin()
     ] },
@@ -399,6 +432,7 @@ const MODULOS = [
     ] },
 
   { id: 'abastecimento', nome: 'Abastecimento', icone: 'ph-gas-pump',
+    aoSalvar: V => ajustarDieselLocal('saida', V.litros, V.data),
     campos: [
       { k: 'data', t: 'date', l: 'Data', now: true },
       { k: 'maquina', t: 'select', l: 'Máquina', opts: 'maquinas', outro: true, persist: 'maquinas' },
@@ -420,6 +454,7 @@ const MODULOS = [
     validar: V => { const i = numero(V.horIni), f = numero(V.horFim); if (i != null && f != null && f < i) return 'O horímetro final não pode ser menor que o inicial.'; } },
 
   { id: 'diesel', nome: 'Chegada de diesel', icone: 'ph-truck',
+    aoSalvar: V => ajustarDieselLocal('entrada', V.litros, V.data),
     campos: [{ k: 'data', t: 'date', l: 'Data da compra', now: true }, { k: 'nf', t: 'text', l: 'Nota fiscal' }, { k: 'litros', t: 'number', l: 'Litros adquiridos (entrada)' }, resp(), assin()] },
 
   { id: 'limpeza_local', nome: 'Limpeza do local', icone: 'ph-broom',
@@ -448,10 +483,10 @@ const MODULOS = [
     campos: [
       { t: 'secao', l: 'Local' },
       { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
-      { k: 'up', t: 'select', l: 'UP / Talhão', opts: UPS },
-      { k: 'areaHa', t: 'number', l: 'Área (ha)' },
-      { k: 'metodo', t: 'select', l: 'Método utilizado', outro: true, opts: ['Inspeção visual das brotações', 'Armadilha adesiva'] },
-      { k: 'nPontos', t: 'number', l: 'Nº de pontos / plantas avaliadas' },
+      { k: 'up', t: 'select', l: 'UP / Talhão (identificação A ou B)', opts: UPS },
+      { k: 'areaHa', t: 'number', l: 'Área (ha)', ro: true, preChave: V => V.up, pre: V => infoTalhao(V.up).ha != null ? String(infoTalhao(V.up).ha) : '' },
+      { k: 'metodo', t: 'text', l: 'Método utilizado', def: 'Armadilha adesiva', ro: true },
+      { k: 'nPontos', t: 'number', l: 'Nº de pontos / plantas avaliadas', ro: true, preChave: V => V.up, pre: V => String(pesDe(talhaoDe(V.up)) || '') },
       { t: 'secao', l: 'Monitoramento' },
       { k: 'data', t: 'date', l: 'Data', now: true },
       { k: 'brotacao', t: 'select', l: 'Brotação presente?', opts: [
@@ -484,32 +519,42 @@ const MODULOS = [
     ] },
 
   { id: 'bichofurao', nome: 'Monitoramento Bicho-furão', icone: 'ph-target',
+    // a 1ª coordenada capturada de um talhão passa a valer sempre (guarda no celular já; o servidor confirma)
+    aoSalvar: V => {
+      if (!V.coordenadasNova || coordFixa(V.up)) return;
+      const m = String(V.coordenadasNova).match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/); if (!m) return;
+      S.dados.coordsBF = S.dados.coordsBF || {};
+      S.dados.coordsBF[talhaoDe(V.up)] = { lat: parseFloat(m[1]), lng: parseFloat(m[2]), texto: String(V.coordenadasNova), data: hoje() };
+      try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+    },
     campos: [
       { t: 'secao', l: 'Local e armadilha' },
       { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
-      { k: 'up', t: 'select', l: 'UP / Talhão', opts: UPS },
+      { k: 'up', t: 'select', l: 'Talhão', opts: TALHOES },
       { t: 'info', show: (V, s, E) => {
         const u = V.up && (E.bicho || {})[V.up]; if (!u) return '';
-        return `Última leitura deste talhão: área ${u.areaHa} ha · armadilha "${u.idArmadilha}" · ${u.localizacao} · ${u.nArmadilhas} armadilhas · distância ${u.distancia}`;
+        return `Última leitura deste talhão: armadilha "${u.idArmadilha}" · ${u.localizacao} · distância ${u.distancia}`;
       } },
       { t: 'acao', l: 'Usar os dados da última leitura', showIf: V => !!(V.up && (S.dados.estado.bicho || {})[V.up]),
         fazer: (V, E, ctx) => {
           const u = (E.bicho || {})[V.up]; if (!u) return;
-          [['areaHa', u.areaHa], ['idArmadilha', u.idArmadilha], ['localizacao', u.localizacao], ['nArmadilhas', u.nArmadilhas], ['distancia', u.distancia]].forEach(([k, v]) => {
+          [['idArmadilha', u.idArmadilha], ['localizacao', u.localizacao], ['distancia', u.distancia]].forEach(([k, v]) => {
             const i = ctx.inputs[k]; if (i && v !== undefined && v !== '') { i.value = v; V[k] = String(v); }
           });
           ctx.refresh(); toast('Preenchido com a última leitura. Confira antes de salvar.');
         } },
-      { k: 'areaHa', t: 'number', l: 'Área (ha)' },
+      { k: 'areaHa', t: 'number', l: 'Área (ha)', ro: true, preChave: V => V.up, pre: V => infoTalhao(V.up).ha != null ? String(infoTalhao(V.up).ha) : '' },
       { k: 'idArmadilha', t: 'text', l: 'Identificação da armadilha' },
       { k: 'localizacao', t: 'text', l: 'Localização (linha onde está a armadilha)' },
-      { k: 'coordenadas', t: 'gps', l: 'Coordenadas', opt: true },
-      { k: 'nArmadilhas', t: 'number', l: 'Nº de armadilhas na UP' },
+      // coordenada: a primeira capturada de cada talhão vale sempre
+      { k: 'coordenadas', t: 'text', l: 'Coordenada do talhão (a da 1ª captura)', ro: true, showIf: V => !!coordFixa(V.up), preChave: V => V.up, pre: V => (coordFixa(V.up) || {}).texto || '' },
+      { k: 'coordenadasNova', t: 'gps', l: 'Capture a coordenada deste talhão (só na 1ª vez; depois fica guardada)', showIf: V => !!V.up && !coordFixa(V.up) },
+      { k: 'nArmadilhas', t: 'number', l: 'Nº de armadilhas no talhão', ro: true, preChave: V => V.up, pre: V => infoTalhao(V.up).armadilhas != null ? String(infoTalhao(V.up).armadilhas) : '' },
       { k: 'distancia', t: 'text', l: 'Distância entre armadilhas' },
       { t: 'info', show: () => 'Referência de bula e pesquisa (Koppert/Cultivar): 1 armadilha para cada 10 ha, cerca de 350 m entre elas. Confira a bula do feromônio que você usa.' },
       { t: 'secao', l: 'Leitura da armadilha' },
       { k: 'data', t: 'date', l: 'Data da leitura', now: true },
-      { k: 'armadilha', t: 'select', l: 'Armadilha nº', outro: true, opts: faixa(1, 30) },
+      { k: 'armadilha', t: 'select', l: 'Armadilha nº', opcoesDe: V => faixa(1, Math.max(1, infoTalhao(V.up).armadilhas || 1)) },
       { k: 'adultos', t: 'select', l: 'Nº de adultos capturados', outro: true, opts: faixa(0, 20) },
       { t: 'info', show: (V, s, E) => {
         const a = numero(V.adultos); if (a == null) return '';
@@ -557,7 +602,7 @@ const MODULOS = [
       { k: 'cidadeDestino', t: 'text', l: 'Cidade destino', preChave: V => V.destino, pre: V => padraoDestino(V, 'cidade') },
       { k: 'docDestino', t: 'text', l: 'CPF/CNPJ destino', preChave: V => V.destino, pre: V => padraoDestino(V, 'doc') },
       { t: 'secao', l: 'Caixas por talhão' },
-      { k: 'itens', t: 'multi', l: 'Talhão (pode escolher mais de um)', opts: UPS, subTitle: v => v,
+      { k: 'itens', t: 'multi', l: 'Talhão (pode escolher mais de um)', opts: UPS_EXPEDICAO, subTitle: v => v,
         sub: [{ k: 'qtd', t: 'number', inteiro: true, l: 'Quantidade de caixas' }] },
       { t: 'info', show: V => { const t = somaCaixas(V.itens); return t > 0 ? `Total da carga: ${t} caixas` : ''; } },
       { t: 'secao', l: 'Transporte e assinaturas' },
@@ -573,7 +618,7 @@ const MODULOS = [
       if (String(V.placa || '').replace(/[^A-Za-z0-9]/g, '').length < 7) return 'Confira a placa: ela tem 7 letras e números.';
     } },
 
-  { id: 'estoque', nome: 'Estoque de produtos', icone: 'ph-package', custom: () => abrirEstoque() }
+  { id: 'estoque', nome: 'Estoque e diesel', icone: 'ph-package', custom: () => abrirEstoque() }
 ];
 
 // telas de estoque (usam o mesmo motor)
@@ -583,19 +628,25 @@ const FORM_CONTAGEM = { id: 'estoque_contagem', nome: 'Contagem', campos: [
   { k: 'qtd', t: 'number', l: 'Quantidade que tem agora' },
   { k: 'unidade', t: 'select', l: 'Unidade', opts: UNID }
 ] };
-const FORM_ENTRADA = { id: 'estoque_entrada', nome: 'Entrada', campos: [
-  { k: 'data', t: 'date', l: 'Data em que chegou', now: true },
-  { k: 'produtoId', t: 'select', l: 'Produto', opts: () => [...S.dados.produtos.map(p => ({ v: p.id, l: p.nome })), { v: 'NOVO', l: '➕ Produto novo (não está na lista)' }] },
-  { k: 'nome', t: 'text', l: 'Nome do produto novo', showIf: (V, s) => s.produtoId === 'NOVO' },
-  { k: 'principio', t: 'text', l: 'Princípio ativo', opt: true, showIf: (V, s) => s.produtoId === 'NOVO' },
-  { k: 'classe', t: 'select', l: 'Classe toxicológica', opt: true, outro: true, opts: () => S.dados.classes, showIf: (V, s) => s.produtoId === 'NOVO' },
-  { k: 'qtd', t: 'number', l: 'Quantidade que chegou' },
-  { k: 'unidade', t: 'select', l: 'Unidade', opts: UNID },
-  { k: 'nf', t: 'text', l: 'Número da nota (se souber)', opt: true },
-  { k: 'foto', t: 'foto', l: 'Foto da nota fiscal', opt: true },
-  { t: 'info', show: (V) => V.foto ? '' : 'Sem foto agora? Tudo bem: a entrada fica como "sem nota" e você anexa a foto depois, na aba Posição.' },
-  resp()
-] };
+// Chegou produto: só a foto da nota fiscal. O saldo do produto se acerta pela contagem, na aba Posição.
+const formNota = p => ({ id: 'estoque_nota', nome: 'Nota fiscal recebida',
+  campos: [
+    { t: 'info', show: () => p ? `Produto: ${p.nome}\nTire a foto da nota fiscal do que chegou.` : 'Tire a foto da nota fiscal do que chegou.' },
+    { k: 'produtoRef', t: 'text', l: 'Produto', def: p ? p.nome : '', ro: true, showIf: () => false },
+    { k: 'quando', t: 'text', l: 'Quando', ro: true, showIf: () => false, preChave: () => 'agora', pre: () => agora() },
+    { k: 'foto', t: 'foto', l: 'Foto da nota fiscal' },
+    { t: 'info', show: () => 'Depois de conferir o que chegou, faça a contagem do produto na aba Posição, para o saldo ficar certo.' }
+  ] });
+
+// ---------- diesel: medição do tanque ----------
+const FORM_MEDICAO_DIESEL = { id: 'diesel_medicao', nome: 'Medição do tanque de diesel',
+  aoSalvar: V => ajustarDieselLocal('medicao', V.litros, V.data),
+  campos: [
+    { t: 'info', show: () => 'Meça o diesel que há no tanque agora. A partir desta medição, o app soma as chegadas e desconta os abastecimentos. Abastecimentos lançados no mesmo dia da medição já contam como incluídos nela.' },
+    { k: 'data', t: 'date', l: 'Data da medição', now: true },
+    { k: 'litros', t: 'number', l: 'Litros que há no tanque agora', minimo: 0 },
+    resp(), assin()
+  ] };
 
 // controle de caixas: tudo que sai na expedição precisa voltar
 const FORM_CX_RETORNO = { id: 'caixas_retorno', nome: 'Retorno de caixas',
@@ -675,10 +726,11 @@ function renderCampo(f, st, ctx) {
         inp.readOnly = !!r.ro;
       });
       if (f.roDe) ctx.dyns.push(() => { inp.readOnly = !!f.roDe(ctx.V, st); });
-      if (obrig || f.inteiro || f.positivo || f.numOuNA) checa(() => {
+      if (obrig || f.inteiro || f.positivo || f.numOuNA || f.minimo != null) checa(() => {
         const v = String(st[f.k] ?? '').trim();
         if (v === '') return obrig ? `Preencha: ${f.l}` : null;
         if (f.numOuNA && v !== '' && !/^n\s*\/?\s*a$/i.test(v) && numero(v) == null) return `${f.l}: digite um número ou N/A`;
+        if (f.minimo != null && v !== '' && !(numero(v) >= f.minimo)) return `${f.l}: use um número a partir de ${f.minimo}`;
         if (f.positivo && !(numero(v) > 0)) return `${f.l}: informe um número maior que zero`;
         return f.inteiro && !/^\d+$/.test(v) ? `${f.l}: use só números inteiros (sem vírgula nem ponto)` : null;
       });
@@ -897,6 +949,7 @@ function montarForm(m, container, onSalvo) {
 
 /* ---------- navegação dos módulos ---------- */
 function ultimoTexto(m) {
+  if (m.id === 'estoque' && dieselEmAlerta()) return `Diesel: ${fmt(S.dados.diesel.litros, 0)} L`;
   if (m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) return 'Leitura do mês pendente';
   if (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length) { const n = lavagensDoUsuario().length; return `${n} ${n === 1 ? 'lavagem pendente' : 'lavagens pendentes'}`; }
   if (m.id === 'receitas_abertas') { const n = (S.dados.receitas || []).length; return n ? `${n} em aberto` : 'Nenhuma em aberto'; }
@@ -928,6 +981,151 @@ function abrirModulo(m) {
 }
 
 
+
+// leitura anterior e variação (+ ou -) do tensiômetro de um talhão, como no hidrômetro
+function infoTensio(s, E, prof, chave) {
+  const prev = (E.tensio || {})[`${s.__opt}|${prof}`];
+  if (!prev) return `${prof} cm: primeira leitura deste tensiômetro.`;
+  const base = `${prof} cm · leitura anterior: ${fmt(prev.leitura)} cb em ${fmtData(prev.data)} ${String(prev.data).slice(11, 16)}`;
+  const l = numero(s[chave]); if (l == null) return base;
+  const v = Math.round((l - prev.leitura) * 10) / 10;
+  return `${base}\nVariação: ${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v))} cb${v > 0 ? ' (solo mais seco)' : v < 0 ? ' (solo mais úmido)' : ' (sem mudança)'}`;
+}
+
+/* =========================================================
+   MAPA DAS ARMADILHAS DE BICHO-FURÃO (1ª coordenada de cada talhão)
+   ========================================================= */
+const svgEl = (tag, attrs = {}, ...kids) => {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+  kids.flat().forEach(c => { if (c != null) e.append(c); });
+  return e;
+};
+const svgTxt = (attrs, txt) => { const t = svgEl('text', attrs); t.textContent = txt; return t; };
+const linkPonto = p => `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`;
+function pontosBF() {
+  const c = S.dados.coordsBF || {};
+  return TALHOES.map(t => ({ t, ...(c[t] || {}) })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+}
+// croqui sem fundo de satélite (o app não carrega imagens da internet): posições relativas, norte para cima, com escala
+function croquiBF(pontos) {
+  const W = 340, H = 250, pad = 38, lat0 = pontos.reduce((a, p) => a + p.lat, 0) / pontos.length, lng0 = pontos.reduce((a, p) => a + p.lng, 0) / pontos.length;
+  const xy = pontos.map(p => ({ ...p, mx: (p.lng - lng0) * Math.cos(lat0 * Math.PI / 180) * 111320, my: (p.lat - lat0) * 110540 }));
+  const larg = Math.max(120, Math.max(...xy.map(p => Math.abs(p.mx))) * 2), alt = Math.max(120, Math.max(...xy.map(p => Math.abs(p.my))) * 2);
+  const esc = Math.min((W - 2 * pad) / larg, (H - 2 * pad) / alt);   // pixels por metro
+  const px = p => W / 2 + p.mx * esc, py = p => H / 2 - p.my * esc;
+  const nice = [20, 50, 100, 200, 500, 1000, 2000, 5000].find(n => n * esc >= 50) || 5000;
+  return svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'croqui', role: 'img', 'aria-label': 'Croqui das armadilhas de bicho-furão' },
+    svgEl('rect', { x: 1, y: 1, width: W - 2, height: H - 2, rx: 14, class: 'croqui-fundo' }),
+    svgEl('path', { d: `M${W - 24} 38 l6 -16 l6 16 M${W - 18} 22 v-10`, class: 'croqui-norte' }),
+    svgTxt({ x: W - 18, y: 52, 'text-anchor': 'middle', class: 'croqui-txt' }, 'N'),
+    svgEl('line', { x1: 16, y1: H - 18, x2: 16 + nice * esc, y2: H - 18, class: 'croqui-escala' }),
+    svgTxt({ x: 16, y: H - 24, class: 'croqui-txt' }, nice >= 1000 ? `${nice / 1000} km` : `${nice} m`),
+    xy.map(p => svgEl('g', {},
+      svgEl('circle', { cx: px(p), cy: py(p), r: 9, class: 'croqui-ponto' }),
+      svgTxt({ x: px(p), y: py(p) + 4, 'text-anchor': 'middle', class: 'croqui-num' }, p.t.replace('TALHÃO ', '')),
+      svgTxt({ x: px(p), y: py(p) - 14, 'text-anchor': 'middle', class: 'croqui-txt' }, `${p.t.replace('TALHÃO ', 'T')} · ${fmt(infoTalhao(p.t).ha)} ha`))));
+}
+function kmlBF(pontos) {
+  const xml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Armadilhas de bicho-furão - Sítio Santa Izabel</name>` +
+    pontos.map(p => { const i = infoTalhao(p.t); return `<Placemark><name>${xml(p.t)}</name><description>${xml(`${fmt(i.ha)} ha · ${i.armadilhas} armadilha(s) · capturada em ${fmtData(p.data)}`)}</description><Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`; }).join('') +
+    `</Document></kml>`;
+}
+function baixarKml(pontos) {
+  const url = URL.createObjectURL(new Blob([kmlBF(pontos)], { type: 'application/vnd.google-earth.kml+xml' }));
+  const a = el('a', { href: url, download: 'armadilhas_bicho_furao.kml' }); document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 8000);
+}
+function abrirMapaBF() {
+  mostrar('tela-form'); S.tela = 'mapa-bf'; $('#form-titulo').textContent = 'Mapa das armadilhas'; $('#form-ultimos').hidden = true;
+  const root = $('#form-root'); root.replaceChildren();
+  const pontos = pontosBF();
+  if (!pontos.length) { root.append(el('p', { class: 'sub' }, 'Ainda não há coordenada guardada. No Monitoramento Bicho-furão, a primeira coordenada capturada de cada talhão fica guardada e aparece aqui.')); return; }
+  root.append(el('p', { class: 'sub' }, 'Cada talhão aparece com a coordenada da 1ª captura. Este croqui mostra as posições relativas; para ver no mapa de satélite, use os botões do Google Maps.'));
+  root.append(croquiBF(pontos));
+  TALHOES.forEach(t => {
+    const p = pontos.find(x => x.t === t), i = infoTalhao(t);
+    root.append(el('div', { class: 'cartao' }, el('strong', {}, t),
+      el('span', { class: 'sub', style: 'display:block' }, `${fmt(i.ha)} ha · ${i.armadilhas} ${i.armadilhas === 1 ? 'armadilha' : 'armadilhas'}`),
+      p ? el('span', { class: 'sub', style: 'display:block' }, `${p.texto} · capturada em ${fmtData(p.data)}`) : el('span', { class: 'sub', style: 'display:block' }, 'Ainda sem coordenada: capture no próximo monitoramento.'),
+      p ? el('a', { class: 'btn sec', href: linkPonto(p), target: '_blank', rel: 'noopener', style: 'margin-top:10px;text-align:center;text-decoration:none' }, 'Abrir no Google Maps') : null));
+  });
+  root.append(el('a', { class: 'btn', href: `https://www.google.com/maps/dir/${pontos.map(p => `${p.lat},${p.lng}`).join('/')}`, target: '_blank', rel: 'noopener', style: 'text-align:center;text-decoration:none' }, 'Ver todos no Google Maps'));
+  root.append(el('button', { type: 'button', class: 'btn sec', onclick: () => baixarKml(pontos) }, 'Baixar o mapa (arquivo KML)'));
+  root.append(el('p', { class: 'sub' }, 'O arquivo KML abre no Google Earth e no Google Meu Mapas, com um marcador em cada talhão. Para trocar a coordenada de um talhão, corrija na aba coordenadas_talhao da planilha.'));
+}
+
+/* =========================================================
+   DIESEL: saldo do tanque, avisos (200 L amarelo, 100 L vermelho) e pedido pelo WhatsApp
+   ========================================================= */
+const DIESEL_AMARELO = 200, DIESEL_VERMELHO = 100, DIESEL_WHATSAPP = '5514997730252';   // (14) 99773-0252
+const dieselVazio = () => ({ temBase: false, baseData: '', baseLitros: null, entradas: 0, saidas: 0, litros: 0 });
+const nivelDiesel = d => (!d || !d.temBase) ? 'sem-base' : d.litros <= DIESEL_VERMELHO ? 'vermelho' : d.litros <= DIESEL_AMARELO ? 'amarelo' : 'ok';
+const dieselEmAlerta = () => ['amarelo', 'vermelho'].includes(nivelDiesel(S.dados.diesel));
+// aplica um movimento ao saldo (medição, chegada ou abastecimento). Só conta o que é depois do dia da medição, como no servidor.
+function aplicaDiesel(d, tipo, v, data) {
+  const l = numero(v); if (l == null) return d;
+  if (tipo === 'medicao') Object.assign(d, { temBase: true, baseData: String(data), baseLitros: l, entradas: 0, saidas: 0, litros: l });
+  else if (!d.temBase || String(data) > d.baseData) { if (tipo === 'entrada') { d.entradas += l; d.litros += l; } else { d.saidas += l; d.litros -= l; } }
+  ['litros', 'entradas', 'saidas'].forEach(k => { d[k] = Math.round(d[k] * 10) / 10; });
+  return d;
+}
+function ajustarDieselLocal(tipo, v, data) {
+  S.dados.diesel = aplicaDiesel(S.dados.diesel || dieselVazio(), tipo, v, data);
+  try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+  renderAlertaReceitas();
+}
+// o saldo do servidor mais o que está na fila do celular (abastecimentos, chegadas e medições ainda não enviados)
+async function dieselComFila(d) {
+  const c = d ? JSON.parse(JSON.stringify(d)) : dieselVazio();
+  (await DB.todos()).forEach(i => {
+    if (i.status === 'erro' || !i.payload) return;
+    const m = i.payload.modulo, x = i.payload.dados || {};
+    if (m === 'abastecimento') aplicaDiesel(c, 'saida', x.litros, x.data);
+    else if (m === 'diesel') aplicaDiesel(c, 'entrada', x.litros, x.data);
+    else if (m === 'diesel_medicao') aplicaDiesel(c, 'medicao', x.litros, x.data);
+  });
+  return c;
+}
+function linkDiesel(qtd) {
+  const d = S.dados.diesel || dieselVazio(), n = numero(qtd);
+  const linhas = ['Olá! Pedido de diesel para o Sítio Santa Izabel.', `Saldo atual no tanque: ${fmt(d.litros, 1)} litros (${fmtData(hoje())}).`, n > 0 ? `Quantidade desejada: ${fmt(n, 0)} litros.` : null, 'Obrigado!'].filter(Boolean);
+  return `https://wa.me/${DIESEL_WHATSAPP}?text=${encodeURIComponent(linhas.join('\n'))}`;
+}
+function renderAlertaDiesel() {
+  const box = $('#alerta-diesel'); if (!box) return;
+  const n = nivelDiesel(S.dados.diesel);
+  if (n !== 'amarelo' && n !== 'vermelho') { box.hidden = true; return; }
+  const d = S.dados.diesel;
+  box.hidden = false; box.className = 'alerta-rec ' + (n === 'vermelho' ? 'prio-0' : 'prio-2');
+  box.replaceChildren(el('span', { class: 'alerta-txt' },
+    el('b', {}, n === 'vermelho' ? `Diesel crítico: restam ${fmt(d.litros, 0)} L` : `Diesel baixo: restam ${fmt(d.litros, 0)} L`),
+    el('small', {}, 'Toque para pedir diesel pelo WhatsApp')),
+    el('span', { class: 'prio' }, n === 'vermelho' ? 'Crítico' : 'Atenção'));
+}
+function renderDiesel(root) {
+  root.replaceChildren();
+  const d = S.dados.diesel, n = nivelDiesel(d);
+  if (n === 'sem-base') {
+    root.append(el('div', { class: 'cartao' }, el('strong', {}, 'Ainda não há medição do tanque'),
+      el('p', { class: 'sub' }, 'Para o saldo de diesel ficar certo, meça quanto há no tanque agora. A partir daí o app soma as chegadas e desconta os abastecimentos.'),
+      el('button', { type: 'button', class: 'btn', onclick: () => { dieselMedindo = true; abrirEstoque('diesel'); } }, 'Medir o tanque agora')));
+    root.append(el('p', { class: 'sub' }, `Sem a medição, os avisos de diesel baixo (${DIESEL_AMARELO} L amarelo e ${DIESEL_VERMELHO} L vermelho) ficam desligados.`));
+    return;
+  }
+  const msg = { ok: `Diesel suficiente. O aviso amarelo começa em ${DIESEL_AMARELO} L e o vermelho em ${DIESEL_VERMELHO} L.`,
+    amarelo: `Atenção: ${DIESEL_AMARELO} L ou menos no tanque. Hora de pedir diesel.`, vermelho: `Crítico: ${DIESEL_VERMELHO} L ou menos no tanque. Peça diesel agora.` }[n];
+  root.append(el('div', { class: 'diesel-card nivel-' + n },
+    el('div', { class: 'diesel-num' }, `${fmt(d.litros, 1)} L`), el('div', { class: 'diesel-msg' }, msg),
+    el('small', {}, `Medido em ${fmtData(d.baseData)}: ${fmt(d.baseLitros, 1)} L · entraram ${fmt(d.entradas, 1)} L · saíram ${fmt(d.saidas, 1)} L`)));
+  const qtd = el('input', { type: 'number', inputmode: 'decimal', min: '0', placeholder: 'Quantos litros pedir? (opcional)', autocomplete: 'off' });
+  const zap = el('a', { class: 'btn zap', href: linkDiesel(''), target: '_blank', rel: 'noopener' }, 'Pedir diesel no WhatsApp');
+  qtd.addEventListener('input', () => { zap.href = linkDiesel(qtd.value); });
+  root.append(el('h3', { class: 'secao' }, 'Pedir diesel'), qtd, zap,
+    el('p', { class: 'sub' }, 'O WhatsApp abre com a mensagem pronta para o (14) 99773-0252. Confira e envie.'));
+  root.append(el('button', { type: 'button', class: 'btn sec', onclick: () => { dieselMedindo = true; abrirEstoque('diesel'); } }, 'Medir o tanque (acertar o saldo)'));
+}
 
 /* =========================================================
    LEITURA MENSAL DO HIDRÔMETRO: lembrete que aparece quando o mês vira e some quando as duas leituras são lançadas
@@ -1037,7 +1235,7 @@ function mostrarBloqueioLavagem(l) {
       el('button', { type: 'button', class: 'btn', onclick: () => abrirModulo(moduloHidrorep()) }, 'Lançar a lavagem agora')),
     el('button', { type: 'button', class: 'link', onclick: abrirAplicar }, '← Voltar às receitas'));
 }
-const classeAlertaModulo = m => ((m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) || (m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length) || (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length)) ? ' alerta' : '';
+const classeAlertaModulo = m => ((m.id === 'estoque' && dieselEmAlerta()) || (m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) || (m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length) || (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length)) ? ' alerta' : '';
 
 /* =========================================================
    RECEITA (técnico) E APLICAÇÃO (aplicador)
@@ -1050,6 +1248,7 @@ function marcarReceitasVistas() { try { localStorage.setItem('sitio_receitas_vis
 
 // faixa no topo do menu: avisa que há receita e mostra a prioridade
 function renderAlertaReceitas() {
+  renderAlertaDiesel();
   renderAlertaHidrometro();
   renderAlertaLavagem();
   const lista = receitasOrdenadas(), vistas = receitasVistas(), novas = lista.filter(r => !vistas.includes(r.id)), topo = lista[0];
@@ -1147,6 +1346,7 @@ async function atualizarReceitas() {
     const lista = r.receitas || [];
     await descontarFilaReceitas(lista);
     if (Array.isArray(r.lavagens)) S.dados.lavagens = await ajustarLavagensComFila(r.lavagens.slice());
+    if (r.diesel) S.dados.diesel = await dieselComFila(r.diesel);
     if (r.hidro) {   // mantém a leitura mais nova (a de outro celular ou a que ainda está na fila deste)
       const est = S.dados.estado = S.dados.estado || {}; est.hidro = est.hidro || {};
       Object.keys(r.hidro).forEach(h => { if (!est.hidro[h] || String(r.hidro[h].data) >= String(est.hidro[h].data)) est.hidro[h] = r.hidro[h]; });
@@ -1316,23 +1516,20 @@ function moduloAplicar(r) {
 }
 
 /* ---------- estoque ---------- */
-let abaEstoque = 'posicao', produtoEntrada = null;
+let abaEstoque = 'posicao', produtoEntrada = null, dieselMedindo = false;
 function abrirEstoque(aba) {
   if (aba) abaEstoque = aba;
   mostrar('tela-estoque');
   const abas = $('#estoque-abas'); abas.replaceChildren();
-  [['posicao', 'Posição'], ['resumo', 'Resumo'], ['entrada', 'Chegou produto'], ['caixas', 'Caixas']].forEach(([id, nome]) =>
-    abas.append(el('button', { class: id === abaEstoque ? 'on' : '', onclick: () => { produtoEntrada = null; abrirEstoque(id); } }, nome)));
+  [['posicao', 'Posição'], ['resumo', 'Resumo'], ['entrada', 'Chegou produto'], ['diesel', 'Diesel'], ['caixas', 'Caixas']].forEach(([id, nome]) =>
+    abas.append(el('button', { class: id === abaEstoque ? 'on' : '', onclick: () => { produtoEntrada = null; dieselMedindo = false; abrirEstoque(id); } }, nome)));
   const root = $('#estoque-root');
-  if (abaEstoque === 'entrada') montarForm(formEntradaPara(produtoEntrada), root, () => { produtoEntrada = null; abrirEstoque('posicao'); });
+  if (abaEstoque === 'entrada') montarForm(formNota(produtoEntrada), root, () => { produtoEntrada = null; abrirEstoque('posicao'); });
+  else if (abaEstoque === 'diesel') { if (dieselMedindo) montarForm(FORM_MEDICAO_DIESEL, root, () => { dieselMedindo = false; abrirEstoque('diesel'); }); else renderDiesel(root); }
   else if (abaEstoque === 'caixas') renderCaixas(root);
   else if (abaEstoque === 'resumo') renderResumo(root);
   else renderPosicao(root);
 }
-
-// entrada de um produto que já existe: a tela abre com ele escolhido e na mesma unidade
-const formEntradaPara = p => p ? { ...FORM_ENTRADA, nome: 'Entrada de ' + p.nome,
-  campos: FORM_ENTRADA.campos.map(c => c.k === 'produtoId' ? { ...c, def: p.id } : c.k === 'unidade' ? { ...c, def: p.un } : c) } : FORM_ENTRADA;
 
 // unidades: tudo é comparado na unidade-base (mL, g, un). Estoque em L e uso em mL se compensam.
 const FATOR_UN = { L: 1000, ML: 1, KG: 1000, G: 1, UN: 1 }, GRUPO_UN = { L: 'vol', ML: 'vol', KG: 'mass', G: 'mass', UN: 'un' };
@@ -1454,7 +1651,7 @@ function painelProduto(p, redesenhar) {
     toast('Contagem guardada ✔ Envia sozinha quando tiver internet'); redesenhar(); sincronizar();
   };
   painel.append(confirmar);
-  painel.append(el('button', { type: 'button', class: 'btn sec', onclick: () => { produtoEntrada = p; abrirEstoque('entrada'); } }, 'Chegou mais deste produto'));
+  painel.append(el('button', { type: 'button', class: 'btn sec', onclick: () => { produtoEntrada = p; abrirEstoque('entrada'); } }, 'Chegou mais (foto da nota)'));
   return painel;
 }
 
@@ -1534,6 +1731,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#alerta-receitas').onclick = () => abrirAplicar();
   $('#alerta-lavagem').onclick = () => abrirModulo(moduloHidrorep());
   $('#alerta-hidrometro').onclick = () => abrirModulo(moduloHidrometro());
+  $('#alerta-diesel').onclick = () => { dieselMedindo = false; abrirEstoque('diesel'); };
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});   // permite abrir o app sem internet
   iniciarApp();
