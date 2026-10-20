@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v19';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v21';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -160,7 +160,7 @@ async function atualizarDados() {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
     if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo.'); return; }
-    if (r.sucesso) { S.dados = r; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); S.dados.lavagens = await ajustarLavagensComFila(S.dados.lavagens || []); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); }
+    if (r.sucesso) { S.dados = r; S.dadosFrescos = true; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); S.dados.lavagens = await ajustarLavagensComFila(S.dados.lavagens || []); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); verificarAvisoHidrometro(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
@@ -233,7 +233,7 @@ function iniciarApp() {
   montarMenu(); irMenu();
   sincronizar(true);
   atualizarReceitas();
-  setTimeout(verificarAvisoReceitas, 400);   // receita que já estava guardada no aparelho
+  setTimeout(() => { verificarAvisoReceitas(); verificarAvisoHidrometro(); }, 400);   // avisos que já estavam guardados no aparelho
 }
 
 /* =========================================================
@@ -335,9 +335,16 @@ const MODULOS = [
     ] },
 
   { id: 'hidrometro', nome: 'Hidrômetro', icone: 'ph-gauge',
+    // a leitura do mês some do alerta assim que é salva (mesmo sem internet) e passa a ser a "leitura anterior"
+    aoSalvar: V => {
+      const E = S.dados.estado = S.dados.estado || {}; E.hidro = E.hidro || {};
+      Object.keys(V.itens || {}).forEach(h => { E.hidro[h] = { data: String(V.datahora), leitura: numero(V.itens[h].leitura) }; });
+      try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+      renderAlertaReceitas();
+    },
     campos: [
       { k: 'datahora', t: 'datetime', l: 'Data e hora', now: true },
-      { k: 'itens', t: 'multi', l: 'Hidrômetro', opts: ['A', 'B'], subTitle: v => 'Hidrômetro ' + v,
+      { k: 'itens', t: 'multi', l: 'Hidrômetro', opts: [{ v: 'A', l: 'A - Poço 1' }, { v: 'B', l: 'B - Poço 2' }], subTitle: v => 'Hidrômetro ' + (ROTULO_HID[v] || v),
         sub: [
           { k: 'leitura', t: 'number', l: 'Leitura (m³)' },
           { t: 'info', show: (V, s, E) => {
@@ -890,6 +897,7 @@ function montarForm(m, container, onSalvo) {
 
 /* ---------- navegação dos módulos ---------- */
 function ultimoTexto(m) {
+  if (m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) return 'Leitura do mês pendente';
   if (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length) { const n = lavagensDoUsuario().length; return `${n} ${n === 1 ? 'lavagem pendente' : 'lavagens pendentes'}`; }
   if (m.id === 'receitas_abertas') { const n = (S.dados.receitas || []).length; return n ? `${n} em aberto` : 'Nenhuma em aberto'; }
   if (m.id === 'aplicar') { const n = (S.dados.receitas || []).length; return n ? `${n} ${n === 1 ? 'receita' : 'receitas'} para aplicar` : 'Nenhuma receita aberta'; }
@@ -920,6 +928,47 @@ function abrirModulo(m) {
 }
 
 
+
+/* =========================================================
+   LEITURA MENSAL DO HIDRÔMETRO: lembrete que aparece quando o mês vira e some quando as duas leituras são lançadas
+   ========================================================= */
+const ROTULO_HID = { A: 'A - Poço 1', B: 'B - Poço 2' };   // o que fica gravado na planilha continua sendo A e B
+// null = nada a lembrar. Caso contrário: quais hidrômetros ainda não têm leitura NESTE mês.
+function hidrometroPendente(hojeStr) {
+  hojeStr = hojeStr || hoje();
+  const mes = hojeStr.slice(0, 7), est = (S.dados.estado || {}).hidro || {};
+  const faltam = ['A', 'B'].filter(h => !(est[h] && String(est[h].data).slice(0, 7) === mes));
+  return faltam.length ? { mes, faltam } : null;
+}
+const moduloHidrometro = () => MODULOS.find(m => m.id === 'hidrometro');
+function renderAlertaHidrometro() {
+  const box = $('#alerta-hidrometro'); if (!box) return;
+  const p = recebeAviso() ? hidrometroPendente() : null;
+  if (!p) { box.hidden = true; const m = $('#aviso-hidrometro'); if (m && !m.hidden) { m.hidden = true; m.replaceChildren(); } return; }
+  box.hidden = false; box.className = 'alerta-rec prio-1';
+  box.replaceChildren(el('span', { class: 'alerta-txt' },
+    el('b', {}, 'Lance a leitura do hidrômetro deste mês'),
+    el('small', {}, `Falta: ${p.faltam.map(h => ROTULO_HID[h]).join(' e ')}`)),
+    el('span', { class: 'prio' }, 'Do mês'));
+}
+// cartão de lembrete: uma vez por mês, na primeira vez que o app abre depois da virada do mês. Depois fica só a faixa no menu.
+function verificarAvisoHidrometro() {
+  const modal = $('#aviso-hidrometro');
+  if (!modal || !modal.hidden || !S.codigo || S.tela === 'tela-acesso' || !recebeAviso() || !S.dadosFrescos) return;   // espera os dados do servidor: não cobra com informação velha
+  const p = hidrometroPendente(); if (!p) return;
+  if (localStorage.getItem('sitio_hidro_avisado') === p.mes) return;
+  try { localStorage.setItem('sitio_hidro_avisado', p.mes); } catch (e) {}
+  const fechar = () => { modal.hidden = true; modal.replaceChildren(); };
+  modal.className = 'modal-rec prio-1';
+  modal.replaceChildren(el('div', { class: 'cx' },
+    el('span', { class: 'prio grande-prio' }, 'Do mês'),
+    el('h2', {}, 'Leitura mensal do hidrômetro'),
+    el('p', { class: 'cx-linha' }, el('b', {}, 'Começou um novo mês: lance as leituras.')),
+    el('p', { class: 'cx-sub' }, `Falta lançar: ${p.faltam.map(h => ROTULO_HID[h]).join(' e ')}. A faixa de lembrete fica no menu até as leituras serem lançadas.`),
+    el('button', { type: 'button', class: 'btn', onclick: () => { if (S.emFormulario && !confirm('Sair do lançamento atual? O que você digitou aqui será perdido.')) return; fechar(); abrirModulo(moduloHidrometro()); } }, 'Lançar a leitura agora'),
+    el('button', { type: 'button', class: 'btn sec', onclick: fechar }, 'Depois')));
+  modal.hidden = false; bip(); if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+}
 
 /* =========================================================
    LAVAGEM DA ROUPA (hidrorrepelente) depois de cada aplicação
@@ -988,7 +1037,7 @@ function mostrarBloqueioLavagem(l) {
       el('button', { type: 'button', class: 'btn', onclick: () => abrirModulo(moduloHidrorep()) }, 'Lançar a lavagem agora')),
     el('button', { type: 'button', class: 'link', onclick: abrirAplicar }, '← Voltar às receitas'));
 }
-const classeAlertaModulo = m => ((m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length) || (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length)) ? ' alerta' : '';
+const classeAlertaModulo = m => ((m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) || (m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length) || (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length)) ? ' alerta' : '';
 
 /* =========================================================
    RECEITA (técnico) E APLICAÇÃO (aplicador)
@@ -1001,6 +1050,7 @@ function marcarReceitasVistas() { try { localStorage.setItem('sitio_receitas_vis
 
 // faixa no topo do menu: avisa que há receita e mostra a prioridade
 function renderAlertaReceitas() {
+  renderAlertaHidrometro();
   renderAlertaLavagem();
   const lista = receitasOrdenadas(), vistas = receitasVistas(), novas = lista.filter(r => !vistas.includes(r.id)), topo = lista[0];
   document.title = lista.length && recebeAviso() ? `(${lista.length}) Sítio Santa Izabel` : 'Sítio Santa Izabel';   // o número aparece até na aba do navegador
@@ -1097,11 +1147,16 @@ async function atualizarReceitas() {
     const lista = r.receitas || [];
     await descontarFilaReceitas(lista);
     if (Array.isArray(r.lavagens)) S.dados.lavagens = await ajustarLavagensComFila(r.lavagens.slice());
+    if (r.hidro) {   // mantém a leitura mais nova (a de outro celular ou a que ainda está na fila deste)
+      const est = S.dados.estado = S.dados.estado || {}; est.hidro = est.hidro || {};
+      Object.keys(r.hidro).forEach(h => { if (!est.hidro[h] || String(r.hidro[h].data) >= String(est.hidro[h].data)) est.hidro[h] = r.hidro[h]; });
+      S.dadosFrescos = true;
+    }
     const antes = receitasAnteriores; receitasAnteriores = lista.map(x => x.id);
     S.dados.receitas = lista;
     try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
     if (!$('#tela-menu').hidden) montarMenu(); else renderAlertaReceitas();
-    if (document.visibilityState === 'visible') verificarAvisoReceitas();
+    if (document.visibilityState === 'visible') { verificarAvisoReceitas(); verificarAvisoHidrometro(); }
   } catch (e) { /* sem sinal: mantém a lista guardada */ }
 }
 
@@ -1478,6 +1533,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') atualizarReceitas(); });
   $('#alerta-receitas').onclick = () => abrirAplicar();
   $('#alerta-lavagem').onclick = () => abrirModulo(moduloHidrorep());
+  $('#alerta-hidrometro').onclick = () => abrirModulo(moduloHidrometro());
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});   // permite abrir o app sem internet
   iniciarApp();
