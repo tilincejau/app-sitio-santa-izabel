@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v11';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v13';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -63,6 +63,7 @@ const ICONES = {
   'bug': '<path d="M12 8c-2.2 0-4 1.8-4 4v2a4 4 0 0 0 8 0v-2c0-2.2-1.8-4-4-4z"/><path d="M9.5 5.5L11 8M14.5 5.5L13 8M4 12h4M16 12h4M5 18l3-2M19 18l-3-2M5 7l3 2M19 7l-3 2"/>',
   'target': '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
   'send': '<path d="M7 17L17 7M8 7h9v9"/>',
+  'clipboard': '<path d="M9 4h6v3H9zM7 5.5H5.5v15h13v-15H17"/><path d="M9 12h6M9 16h4"/>',
   'caret': '<path d="M9 6l6 6-6 6"/>'
 };
 function ico(nome) {
@@ -157,7 +158,7 @@ async function atualizarDados() {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
     if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo.'); return; }
-    if (r.sucesso) { S.dados = r; ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(r)); montarMenu(); }
+    if (r.sucesso) { S.dados = r; await descontarFilaReceitas(S.dados.receitas); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
@@ -211,8 +212,10 @@ function sairDoAparelho() {
 
 /* ---------- telas ---------- */
 function mostrar(id) {
+  S.tela = id; S.emFormulario = false;   // montarForm marca de novo quando abre um formulário
   document.querySelectorAll('.tela').forEach(t => { t.hidden = t.id !== id; });
   window.scrollTo(0, 0);
+  if (typeof renderAlertaReceitas === 'function') renderAlertaReceitas();
 }
 function irMenu() { mostrar('tela-menu'); renderStatus(); }
 
@@ -221,6 +224,8 @@ function iniciarApp() {
   try { const c = JSON.parse(localStorage.getItem('sitio_dados')); if (c) S.dados = c; } catch (e) {}
   montarMenu(); irMenu();
   sincronizar(true);
+  atualizarReceitas();
+  setTimeout(verificarAvisoReceitas, 400);   // receita que já estava guardada no aparelho
 }
 
 /* =========================================================
@@ -229,14 +234,32 @@ function iniciarApp() {
    Todo campo é obrigatório, exceto com opt:true.  ro:true = só leitura.  def = valor inicial.
    showIf(V, store) mostra/esconde.  outro:true acrescenta "Outro (digitar)".  persist:'lista' guarda o "Outro" para a próxima vez.
    ========================================================= */
-const ehAdub = V => V.aplicacao === 'ADUBAÇÃO';
-const UPS = ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'];
+const UPS = ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B', 'TALHÃO 4, ÁREA A', 'TALHÃO 4, ÁREA B'];
 const DESTINOS = {   // destinos padrão: preenchem cidade e CPF/CNPJ (que podem ser editados)
   FRUTATA: { cidade: 'Area Rural, SN - KM 19, Area Rural de Itapolis CEP 14907-899, Itapolis/SP', doc: '63.293.267/0001-34' },
   PRITAM: { cidade: 'AVENIDA PREFEITO TARQUINIO BELLENTANI, 2955, PQ INDUSTRIAL VICENTE NIGRO CEP 14900-000, Itapolis/SP', doc: '04.827.322/0002-40' }
 };
 const padraoDestino = (V, campo) => (DESTINOS[String(V.destino || '').trim().toUpperCase()] || {})[campo];
 const somaCaixas = itens => Object.values(itens || {}).reduce((t, o) => t + (parseInt(o.qtd, 10) || 0), 0);
+
+// ---- receita do técnico e aplicação ----
+const TRATORES = ['TR05', 'TR10', 'TR20 MASSEY GERGUSON 4275 - TRAÇADO 4X4', 'TR21 MASSEY GERGUSON 4275 - SIMPLES', 'TR22 NEW HOLLAND TL 5.80'];
+const APLICACOES_REC = ['PULVERIZAÇÃO', 'ADUBAÇÃO', 'HERBICIDA', 'DRENCH', 'MANEJO OPERACIONAL'];
+const METODOS_REC = {
+  'PULVERIZAÇÃO': ['Turbo atomizador'], 'ADUBAÇÃO': ['Adubadeira mecanizada', 'Via água de irrigação'],
+  'HERBICIDA': ['Barra de herbicida'], 'DRENCH': ['Máquina de drench'], 'MANEJO OPERACIONAL': ['Roçada', 'Poda', 'Desbrota']
+};
+const PRIORIDADES_REC = [
+  { v: 'URGENTE', l: 'Urgente (imediato ou até 1 dia)' }, { v: 'ALTA', l: 'Alta prioridade (2 dias)' }, { v: 'MÉDIA', l: 'Média prioridade (3 dias)' },
+  { v: 'BAIXA', l: 'Baixa prioridade (5 dias)' }, { v: 'MUITO BAIXA', l: 'Muito baixa prioridade (7 dias)' }, { v: 'PROGRAMADO', l: 'Programado (acima de 7 dias)' }];
+const ORDEM_PRIO = ['URGENTE', 'ALTA', 'MÉDIA', 'BAIXA', 'MUITO BAIXA', 'PROGRAMADO'];
+const rotuloPrio = p => ({ 'URGENTE': 'Urgente', 'ALTA': 'Alta prioridade', 'MÉDIA': 'Média prioridade', 'BAIXA': 'Baixa prioridade', 'MUITO BAIXA': 'Muito baixa', 'PROGRAMADO': 'Programado' }[p] || p);
+const FASES_REC = ['1. Indução e Botão Floral', '2. Florescimento (Antese)', '3. Frutificação', '4. Maturação e Colheita'];
+const PREVISOES_REC = ['Safra Principal (Jan - Mar)', 'Entressafra 1 (Abr - Jun)', 'Entressafra 2 (Jul - Set)', 'Tardia (Out - Dez)'];
+const NAO_MANEJO = V => !!V.aplicacao && V.aplicacao !== 'MANEJO OPERACIONAL';
+const E_MANEJO = V => V.aplicacao === 'MANEJO OPERACIONAL';
+const JUSTIFICATIVAS_REC = ['Controle Preventivo (Calendário)', 'Controle de Pragas (Monitoramento)', 'Controle de Doenças Fúngicas/Bacterianas', 'Controle de Plantas Daninhas',
+  'Adubação de Produção / Manutenção', 'Adubação de Estimulação (Floração)', 'Correção de Deficiência Nutricional', 'Recomendação Baseada em Análise de Solo/Folha', 'Controle do Greening'];
 const PSI_COM_PRODUTO = /^(Sim|Repasse)/;   // controle com aplicação: pede produtos e quem aplicou
 const faixa = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
 const BF_EVENTO = V => !!V.evento && V.evento !== 'Não';   // instalação ou troca de feromônio
@@ -245,55 +268,43 @@ const assin = () => ({ k: 'assinatura', t: 'assinatura', l: 'Assinatura' });
 const parseDH = s => { const d = new Date(s); return isNaN(d) ? null : d; };
 
 const MODULOS = [
-  { id: 'aplicacao', nome: 'Pulverização / Adubação', icone: 'ph-flask',
+  { id: 'receita', nome: 'Visita técnica (receita)', icone: 'ph-clipboard',
     campos: [
-      { t: 'secao', l: 'Dados gerais' },
-      { k: 'aplicacao', t: 'select', l: 'Aplicação', opts: ['PULVERIZAÇÃO', 'ADUBAÇÃO'] },
-      { k: 'tipo', t: 'select', l: 'Tipo', opts: ['PREVENTIVA', 'CORRETIVA'] },
-      { k: 'talhao', t: 'select', l: 'Talhão', opts: ['1', '2', '3'] },
-      { k: 'areas', t: 'multi', l: 'Área', opts: ['A', 'B'], subTitle: v => 'Área ' + v,
+      { t: 'secao', l: 'Visita técnica' },
+      { t: 'info', show: () => 'Agrônomo: Vinicius Soleira de Oliveira\nCultura: Lima Ácida · Variedade: Tahiti' },
+      { k: 'datahora', t: 'datetime', l: 'Dia e hora da visita', now: true },
+      { k: 'talhoes', t: 'multi', l: 'Talhão (pode escolher de 1 a 4)', opts: ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3', 'TALHÃO 4'], subTitle: v => v,
         sub: [
-          { k: 'inicio', t: 'datetime', l: 'Data e hora de início' },
-          { k: 'fim', t: 'datetime', l: 'Data e hora de fim' },
-          { k: 'n', t: 'number', l: 'Número de aplicações' }
+          { k: 'avaliacao', t: 'textarea', l: 'Avaliação técnica (o que foi visto e o alvo)' },
+          { k: 'fase', t: 'select', l: 'Fase fenológica', outro: true, opts: FASES_REC, showIf: NAO_MANEJO },
+          { k: 'previsao', t: 'select', l: 'Previsão de colheita', opts: PREVISOES_REC, showIf: NAO_MANEJO }
         ] },
-      { k: 'justificativa', t: 'select', l: 'Justificativa', outro: true, opts: ['Controle Preventivo (Calendário)', 'Controle de Pragas (Monitoramento)', 'Manejo de Doenças Fúngicas/Bacterianas', 'Manejo de Plantas Daninhas', 'Adubação de Produção / Manutenção', 'Adubação de Estimulação (Floração)', 'Correção de Deficiência Nutricional', 'Recomendação Baseada em Análise de Solo/Folha', 'Controle do Greening'] },
+      { t: 'secao', l: 'Receita' },
+      { k: 'aplicacao', t: 'select', l: 'Aplicação', opts: APLICACOES_REC },
+      { k: 'tipo', t: 'select', l: 'Tipo', opcoesDe: V => V.aplicacao === 'ADUBAÇÃO' ? ['GRANULADA', 'FERTIRRIGAÇÃO'] : ['PREVENTIVA', 'CORRETIVA'], showIf: NAO_MANEJO },
+      { k: 'areas', t: 'multi', l: 'Área (A, B ou as duas)', opts: ['A', 'B'] },
+      { k: 'justificativa', t: 'select', l: 'Justificativa', outro: true, outroPrimeiro: true, opts: JUSTIFICATIVAS_REC },
       { k: 'cultura', t: 'text', l: 'Cultura', def: 'Lima Ácida', ro: true },
       { k: 'variedade', t: 'text', l: 'Variedade', def: 'Tahiti', ro: true },
-      { k: 'alvo', t: 'text', l: 'Alvo' },
-      { k: 'fase', t: 'select', l: 'Fase fenológica', outro: true, opts: ['1. Indução e Botão Floral', '2. Florescimento (Antese)', '3. Frutificação', '4. Maturação e Colheita'] },
-      { k: 'previsao', t: 'select', l: 'Previsão de colheita', opts: ['Safra Principal (Jan - Mar)', 'Entressafra 1 (Abr - Jun)', 'Entressafra 2 (Jul - Set)', 'Tardia (Out - Dez)'] },
-      { t: 'secao', l: 'Calda e máquina' },
-      { k: 'metodo', t: 'select', l: 'Método de aplicação', opts: ['PULVERIZAÇÃO', 'SOLO', 'FERTIRRIGAÇÃO'] },
-      { k: 'volume', t: 'select', l: 'Volume da calda', outro: true, opts: ['2000 Litros', '4000 Litros'] },
-      { k: 'ph', t: 'number', l: 'pH' },
-      { k: 'vazao', t: 'number', l: 'Vazão (L/ha)' },
-      { k: 'trator', t: 'select', l: 'Trator', outro: true, opts: ['TR05', 'TR10', 'TR20 MASSEY GERGUSON 4275 - TRAÇADO 4X4', 'TR21 MASSEY GERGUSON 4275 - SIMPLES', 'TR22 NEW HOLLAND TL 5.80'] },
-      { k: 'marcha', t: 'text', l: 'Marcha' },
-      { k: 'rpm', t: 'number', l: 'RPM' },
-      { k: 'implemento', t: 'text', l: 'Implemento' },
-      { k: 'pressao', t: 'text', l: 'Pressão' },
-      { k: 'bico', t: 'text', l: 'Bico' },
-      { t: 'secao', l: 'Prazos e clima' },
-      { k: 'reentrada', t: 'select', l: 'Reentrada', outro: true, opts: ['24 Horas'] },
-      { k: 'carencia', t: 'select', l: 'Carência', opts: ['14 Dias', '7 Dias', '6 Dias', '5 Dias', '4 Dias', '3 Dias', '2 Dias', '1 Dia', 'N/A'] },
-      { k: 'intervalo', t: 'select', l: 'Intervalo das aplicações', outro: true, opts: ['Diário', '7 dias (Semanal)', '14 dias (Quinzenal)', '21 a 28 dias (Mensal)', 'N/A'] },
-      { k: 'condicoes', t: 'select', l: 'Condições meteorológicas', opts: ['Chuvoso', 'Ensolarado', 'Úmido', 'Condições Normais'] },
-      { k: 'vento', t: 'select', l: 'Velocidade do vento', opts: ['Forte', 'Fraco'] },
-      { t: 'secao', l: 'Produtos' },
-      { k: 'produtos', t: 'produtos', l: 'Produtos (até 10)' },
-      { t: 'secao', l: 'Segurança e fechamento' },
-      { k: 'epi', t: 'textarea', l: 'EPI', def: EPI_TXT },
-      { k: 'mistura', t: 'select', l: 'Mistura do tanque', outro: true, opts: ['N/A'] },
-      { k: 'descarte', t: 'textarea', l: 'Cuidados com o descarte', def: DESCARTE_TXT },
-      { k: 'sobra', t: 'text', l: 'Sobra de calda', def: 'Não', ro: true },
-      { k: 'obs', t: 'select', l: 'Observações adicionais', outro: true, opts: ['N/A'] },
-      { k: 'aplicador', t: 'select', l: 'Aplicador', opts: RESP },
-      assin()
-    ],
-    validar: V => {
-      for (const [a, x] of Object.entries(V.areas || {})) if (x.inicio && x.fim && x.fim < x.inicio) return `Área ${a}: o fim não pode ser antes do início.`;
-    } },
+      { t: 'info', show: () => 'O alvo da receita é o que você descreveu na avaliação técnica de cada talhão.' },
+      { k: 'metodo', t: 'select', l: 'Método de aplicação', outro: true, opcoesDe: V => METODOS_REC[V.aplicacao] || [],
+        padraoDe: V => ['PULVERIZAÇÃO', 'HERBICIDA', 'DRENCH'].includes(V.aplicacao) ? METODOS_REC[V.aplicacao][0] : undefined },
+      { k: 'dataRealizacao', t: 'datetime', l: 'Data e hora da realização', now: true, showIf: E_MANEJO },
+      { k: 'volume', t: 'select', l: 'Volume de calda', outro: true, opts: ['4000 Litros', '2000 Litros', '1000 Litros', '400 Litros'], showIf: NAO_MANEJO },
+      { k: 'ph', t: 'number', l: 'pH', showIf: NAO_MANEJO },
+      { k: 'vazao', t: 'number', l: 'Vazão (L/ha)', showIf: NAO_MANEJO },
+      { k: 'reentrada', t: 'text', l: 'Reentrada', def: '24 Horas', ro: true, showIf: NAO_MANEJO },
+      { k: 'carencia', t: 'select', l: 'Carência', opts: ['14 Dias', '7 Dias', '6 Dias', '5 Dias', '4 Dias', '3 Dias', '2 Dias', '1 Dia', 'N/A'], showIf: NAO_MANEJO },
+      { t: 'secao', l: 'Produtos', showIf: NAO_MANEJO },
+      { k: 'produtos', t: 'produtos', modo: 'receita', l: 'Produtos (até 10)', showIf: NAO_MANEJO },
+      { t: 'secao', l: 'Prioridade e assinatura' },
+      { k: 'prioridade', t: 'select', l: 'Prioridade', opts: PRIORIDADES_REC },
+      { k: 'dataProgramada', t: 'date', l: 'Data programada para aplicar', showIf: V => V.prioridade === 'PROGRAMADO' },
+      { k: 'agronomo', t: 'text', l: 'Nome do agrônomo', def: 'Vinicius Soleira de Oliveira', ro: true },
+      { k: 'assinatura', t: 'assinatura', l: 'Assinatura do agrônomo' }
+    ] },
+
+  { id: 'aplicar', nome: 'Aplicação (receitas)', icone: 'ph-flask', custom: () => abrirAplicar() },
 
   { id: 'hidrometro', nome: 'Hidrômetro', icone: 'ph-gauge',
     campos: [
@@ -316,7 +327,7 @@ const MODULOS = [
     campos: [
       { k: 'datahora', t: 'datetime', l: 'Data e hora', now: true },
       { k: 'itens', t: 'multi', l: 'Área (pode escolher várias)', subTitle: v => v,
-        opts: ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'],
+        opts: UPS,
         sub: [
           { k: 'inicio', t: 'time', l: 'Início (hora)' },
           { k: 'fim', t: 'time', l: 'Final (hora)' },
@@ -334,7 +345,7 @@ const MODULOS = [
   { id: 'hidrorepelente', nome: 'Hidrorrepelente (lavagem EPI)', icone: 'ph-shield-check',
     campos: [
       { k: 'data', t: 'date', l: 'Data da lavagem', now: true },
-      { k: 'talhao', t: 'select', l: 'Talhão', opts: ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3'] },
+      { k: 'talhao', t: 'select', l: 'Talhão', opts: ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3', 'TALHÃO 4'] },
       resp(),
       { t: 'info', show: (V, s, E) => {
         if (!V.resp) return ''; const h = (E.hidrorep || {})[V.resp];
@@ -395,7 +406,7 @@ const MODULOS = [
     campos: [
       { t: 'secao', l: 'Local' },
       { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
-      { k: 'up', t: 'select', l: 'UP / Talhão', opts: ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'] },
+      { k: 'up', t: 'select', l: 'UP / Talhão', opts: UPS },
       { k: 'areaHa', t: 'number', l: 'Área (ha)' },
       { k: 'metodo', t: 'select', l: 'Método utilizado', outro: true, opts: ['Inspeção visual das brotações', 'Armadilha adesiva'] },
       { k: 'nPontos', t: 'number', l: 'Nº de pontos / plantas avaliadas' },
@@ -434,7 +445,7 @@ const MODULOS = [
     campos: [
       { t: 'secao', l: 'Local e armadilha' },
       { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
-      { k: 'up', t: 'select', l: 'UP / Talhão', opts: ['TALHÃO 1, ÁREA A', 'TALHÃO 1, ÁREA B', 'TALHÃO 2, ÁREA A', 'TALHÃO 2, ÁREA B', 'TALHÃO 3, ÁREA A', 'TALHÃO 3, ÁREA B'] },
+      { k: 'up', t: 'select', l: 'UP / Talhão', opts: UPS },
       { t: 'info', show: (V, s, E) => {
         const u = V.up && (E.bicho || {})[V.up]; if (!u) return '';
         return `Última leitura deste talhão: área ${u.areaHa} ha · armadilha "${u.idArmadilha}" · ${u.localizacao} · ${u.nArmadilhas} armadilhas · distância ${u.distancia}`;
@@ -580,8 +591,8 @@ function ajustarCaixasLocal(tipo, destino, qtd) {
 /* =========================================================
    MOTOR DE FORMULÁRIOS
    ========================================================= */
-function opcoes(f) {
-  let o = typeof f.opts === 'function' ? f.opts() : f.opts;
+function opcoes(f, st) {
+  let o = typeof f.opts === 'function' ? f.opts(st) : f.opts;
   if (typeof o === 'string') o = [...new Set([...(LISTAS_BASE[o] || []), ...((S.dados.listas || {})[o] || [])])];
   return (o || []).map(x => typeof x === 'object' ? x : { v: x, l: x });
 }
@@ -608,10 +619,10 @@ function renderCampo(f, st, ctx) {
       if (f.upper) { inp.classList.add('caixa-alta'); ctx.finalizers.push(() => { st[f.k] = String(st[f.k] ?? '').trim().toUpperCase(); }); }
       inp.addEventListener('input', () => { st[f.k] = inp.value; });
       if (f.pre) ctx.dyns.push(() => {   // preenche com o último valor conhecido quando a "chave" (ex.: a UP) muda; o usuário pode editar
-        const chave = String(f.preChave ? f.preChave(ctx.V) : '');
+        const chave = String(f.preChave ? f.preChave(ctx.V, st) : '');
         if (inp.dataset.pre === chave) return;
         inp.dataset.pre = chave;
-        const v = f.pre(ctx.V, S.dados.estado);
+        const v = f.pre(ctx.V, S.dados.estado, st);
         if (v !== undefined && v !== null && String(v) !== '') { inp.value = v; st[f.k] = String(v); inp.dataset.autoPre = '1'; }
         else if (inp.dataset.autoPre === '1') { inp.value = ''; st[f.k] = ''; inp.dataset.autoPre = '0'; }   // trocou para um destino sem padrão: limpa para digitar
       });
@@ -630,14 +641,29 @@ function renderCampo(f, st, ctx) {
       break;
     }
     case 'select': {
-      const sel = el('select', {}, el('option', { value: '' }, 'Selecione…'), opcoes(f).map(o => el('option', { value: o.v }, o.l)), f.outro ? el('option', { value: '__outro' }, 'Outro (digitar)…') : null);
-      const txt = el('input', { type: 'text', placeholder: 'Digite aqui…', hidden: true });
+      const sel = el('select');
+      const txt = el('input', { type: 'text', placeholder: 'Digite aqui…', hidden: true, autocomplete: 'off' });
+      const popular = lista => {
+        const outro = f.outro ? el('option', { value: '__outro' }, 'Outro (digitar)…') : null;
+        sel.replaceChildren(...[el('option', { value: '' }, 'Selecione…'), f.outroPrimeiro ? outro : null, ...lista.map(o => el('option', { value: o.v }, o.l)), f.outroPrimeiro ? null : outro].filter(Boolean));
+      };
       const sync = () => {
         if (sel.value === '__outro') { txt.hidden = false; st[f.k] = f.caixaAlta ? txt.value.trim().replace(/\s+/g, ' ').toUpperCase() : txt.value.trim(); st[f.k + '__novo'] = true; }
         else { txt.hidden = true; st[f.k] = sel.value; delete st[f.k + '__novo']; }
       };
+      popular(opcoes(f, st));
       if (f.def !== undefined) { sel.value = f.def; if (sel.selectedIndex < 0) sel.value = ''; }   // padrão que não está na lista: deixa em branco
       st[f.k] = sel.value;
+      if (f.opcoesDe) ctx.dyns.push(() => {   // lista que muda conforme outro campo (ex.: método de aplicação depende do tipo de aplicação)
+        const lista = (f.opcoesDe(ctx.V, st) || []).map(x => typeof x === 'object' ? x : { v: x, l: x });
+        const chave = JSON.stringify(lista); if (sel.dataset.lista === chave) return;
+        sel.dataset.lista = chave;
+        const atual = st[f.k]; popular(lista);
+        const padrao = f.padraoDe ? f.padraoDe(ctx.V, st) : undefined;
+        sel.value = lista.some(o => o.v === atual) ? atual : (padrao !== undefined ? padrao : '');
+        if (sel.selectedIndex < 0) sel.value = '';
+        sync();
+      });
       sel.addEventListener('change', sync); txt.addEventListener('input', sync);
       if (f.persist) ctx.persist.push(() => st[f.k + '__novo'] && st[f.k] ? { lista: f.persist, valor: st[f.k] } : null);
       if (obrig) checa(() => !st[f.k] ? `Preencha: ${f.l}` : null);
@@ -647,13 +673,14 @@ function renderCampo(f, st, ctx) {
     case 'multi': {
       const sel = {}; st[f.k] = sel;
       const chips = el('div', { class: 'chips' }), blocos = el('div');
-      opcoes(f).forEach(o => {
+      const temSub = (f.sub || []).length > 0;
+      opcoes(f, st).forEach(o => {
         const sub = { __opt: o.v };
-        const bloco = el('div', { class: 'bloco', hidden: true }, el('h4', {}, f.subTitle ? f.subTitle(o.v) : o.l));
+        const bloco = el('div', { class: 'bloco', hidden: true }, temSub ? el('h4', {}, f.subTitle ? f.subTitle(o.v) : o.l) : null);
         (f.sub || []).forEach(sf => bloco.append(renderCampo(sf, sub, ctx)));
         const chip = el('button', { type: 'button', class: 'chip', 'aria-pressed': 'false', onclick: () => {
           const on = !chip.classList.contains('on');
-          chip.classList.toggle('on', on); chip.setAttribute('aria-pressed', on); bloco.hidden = !on;
+          chip.classList.toggle('on', on); chip.setAttribute('aria-pressed', on); bloco.hidden = !on || !temSub;
           if (on) sel[o.v] = sub; else delete sel[o.v];
           ctx.refresh();
         } }, o.l);
@@ -738,14 +765,16 @@ function renderProdutos(f, st, ctx, w, rotulo, checa) {
   const lista = []; st[f.k] = lista;
   const cont = el('div', { class: 'prods' });
   const btnAdd = el('button', { type: 'button', class: 'btn sec', onclick: () => novo() }, '+ Adicionar produto');
-  const psi = f.modo === 'psilideo';
-  const adub = V => !psi && ehAdub(V), pulv = V => psi || !ehAdub(V), novoP = (V, s) => s.id === 'NOVO';
+  const psi = f.modo === 'psilideo', rec = f.modo === 'receita';
+  const adub = V => rec && V.aplicacao === 'ADUBAÇÃO', pulv = V => !adub(V), novoP = (V, s) => s.id === 'NOVO';
   const campos = () => [
     { k: 'id', t: 'select', l: 'Produto', opts: () => [...S.dados.produtos.map(p => ({ v: p.id, l: p.nome })), { v: 'NOVO', l: '➕ Outro (produto novo)' }] },
     { k: 'nome', t: 'text', l: 'Nome do produto novo', showIf: novoP },
     { k: 'principio', t: 'text', l: 'Princípio ativo', showIf: novoP },
     { k: 'classe', t: 'select', l: 'Classe toxicológica', outro: true, opts: () => S.dados.classes, showIf: novoP },
-    { t: 'info', show: (V, s) => { const p = S.dados.produtos.find(x => x.id === s.id); return p ? `Princípio ativo: ${p.principio || '-'}\nClasse: ${p.classe || '-'}` : ''; } },
+    { t: 'info', show: (V, s) => { const p = S.dados.produtos.find(x => x.id === s.id); return p ? `Princípio ativo: ${p.principio || '-'}\nClasse: ${p.classe || '-'}${rec ? '\nConcentração salva: ' + (p.concentracao || 'ainda não cadastrada') : ''}` : ''; } },
+    ...(rec ? [{ k: 'concentracao', t: 'text', l: 'Concentração (ex.: 18 EC, 250 g/L)', preChave: (V, s) => s.id,
+      pre: (V, E, s) => { const p = S.dados.produtos.find(x => x.id === s.id); return p ? p.concentracao : ''; } }] : []),
     { k: 'dosagem', t: 'number', l: 'Dosagem', showIf: pulv },
     { k: 'pes', t: 'select', l: 'Quantidade de pés', opts: ['7500', '4200', '2200'], showIf: adub },
     { k: 'dosePlanta', t: 'number', l: 'Dose por planta', showIf: adub },
@@ -784,7 +813,7 @@ function comprimir(file, max = 1400, q = .7) {
 function montarForm(m, container, onSalvo) {
   const ctx = { V: {}, inputs: {}, checks: [], shows: [], dyns: [], infos: [], finalizers: [], persist: [] };
   ctx.refresh = () => { ctx.dyns.forEach(f => f()); ctx.shows.forEach(f => f()); ctx.infos.forEach(f => f()); };
-  container.replaceChildren();
+  container.replaceChildren(); S.emFormulario = true;
   m.campos.forEach(f => container.append(renderCampo(f, ctx.V, ctx)));
   container.addEventListener('input', ctx.refresh); container.addEventListener('change', ctx.refresh);
 
@@ -815,14 +844,16 @@ function montarForm(m, container, onSalvo) {
 
 /* ---------- navegação dos módulos ---------- */
 function ultimoTexto(m) {
+  if (m.id === 'aplicar') { const n = (S.dados.receitas || []).length; return n ? `${n} ${n === 1 ? 'receita' : 'receitas'} para aplicar` : 'Nenhuma receita aberta'; }
   if (m.id === 'estoque') { const n = (S.dados.estoque || []).length; return n ? (n === 1 ? '1 produto' : `${n} produtos`) : ''; }
   const r = ((S.dados.ultimos || {})[m.id] || [])[0];
   if (!r) return '';
-  return m.id === 'aplicacao' ? `${r[0]} · Talhão ${r[2]}` : `Último: ${String(r[0]).slice(0, 10)}`;
+  return `Último: ${String(r[0]).slice(0, 10)}`;
 }
 function montarMenu() {
+  renderAlertaReceitas();
   const g = $('#grid-modulos'); g.replaceChildren();
-  MODULOS.forEach(m => g.append(el('button', { class: 'mod', onclick: () => abrirModulo(m) },
+  MODULOS.forEach(m => g.append(el('button', { class: 'mod' + (m.id === 'aplicar' && (S.dados.receitas || []).length ? ' alerta' : ''), onclick: () => abrirModulo(m) },
     el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)))));
   g.append(el('p', { class: 'versao' }, `Versão ${APP_VERSAO}${S.nome ? ' · ' + S.nome + ' · ' : ' · '}`, el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: sairDoAparelho }, 'sair')));
 }
@@ -835,6 +866,204 @@ function abrirModulo(m) {
   if (lista.length) { ult.hidden = false; ult.append(el('details', {}, el('summary', {}, 'Últimos lançamentos'), lista.map(r => el('div', {}, r.filter(Boolean).join(' · '))))); } else ult.hidden = true;
   mostrar('tela-form');
   montarForm(m, $('#form-root'), irMenu);
+}
+
+
+/* =========================================================
+   RECEITA (técnico) E APLICAÇÃO (aplicador)
+   ========================================================= */
+const receitasOrdenadas = () => [...(S.dados.receitas || [])].sort((a, b) => ORDEM_PRIO.indexOf(a.prioridade) - ORDEM_PRIO.indexOf(b.prioridade) || String(a.prazo).localeCompare(String(b.prazo)));
+const receitasVistas = () => { try { return JSON.parse(localStorage.getItem('sitio_receitas_vistas')) || []; } catch (e) { return []; } };
+const atrasada = r => String(r.prazo) < hoje();
+function marcarReceitasVistas() { try { localStorage.setItem('sitio_receitas_vistas', JSON.stringify((S.dados.receitas || []).map(r => r.id))); } catch (e) {} renderAlertaReceitas(); }
+
+// faixa no topo do menu: avisa que há receita e mostra a prioridade
+function renderAlertaReceitas() {
+  const lista = receitasOrdenadas(), vistas = receitasVistas(), novas = lista.filter(r => !vistas.includes(r.id)), topo = lista[0];
+  document.title = lista.length ? `(${lista.length}) Sítio Santa Izabel` : 'Sítio Santa Izabel';   // o número aparece até na aba do navegador
+
+  const box = $('#alerta-receitas');
+  if (box) {
+    if (!lista.length) box.hidden = true;
+    else {
+      box.hidden = false; box.className = 'alerta-rec prio-' + Math.max(0, ORDEM_PRIO.indexOf(topo.prioridade));
+      box.replaceChildren(
+        el('span', { class: 'alerta-txt' },
+          el('b', {}, novas.length ? (novas.length === 1 ? 'Nova receita para aplicar' : `${novas.length} novas receitas para aplicar`) : `${lista.length} ${lista.length === 1 ? 'receita' : 'receitas'} para aplicar`),
+          el('small', {}, `${topo.aplicacao} · prazo ${fmtData(topo.prazo)}${atrasada(topo) ? ' (atrasada)' : ''}`)),
+        el('span', { class: 'prio' }, rotuloPrio(topo.prioridade)));
+    }
+  }
+  // sino flutuante: nas outras telas, enquanto houver receita aberta
+  const sino = $('#sino-receitas');
+  if (sino) {
+    const mostrarSino = lista.length && S.codigo && !['tela-menu', 'tela-acesso', 'aplicar-lista', 'aplicar-receita'].includes(S.tela);
+    sino.hidden = !mostrarSino;
+    if (mostrarSino) { sino.className = 'sino prio-' + Math.max(0, ORDEM_PRIO.indexOf(topo.prioridade)); sino.textContent = `${lista.length} ${lista.length === 1 ? 'receita' : 'receitas'} · ${rotuloPrio(topo.prioridade)}`; }
+  }
+}
+const marcaVista = id => { const v = receitasVistas(); if (!v.includes(id)) { v.push(id); try { localStorage.setItem('sitio_receitas_vistas', JSON.stringify(v)); } catch (e) {} } renderAlertaReceitas(); };
+
+// som curto (sem arquivo de áudio) e vibração
+function bip() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    const c = new AC(), g = c.createGain(); g.connect(c.destination);
+    [880, 1175].forEach((freq, i) => {
+      const o = c.createOscillator(), t = c.currentTime + i * 0.28; o.type = 'sine'; o.frequency.value = freq; o.connect(g);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+      o.start(t); o.stop(t + 0.26);
+    });
+  } catch (e) { /* sem som: o aviso na tela continua */ }
+}
+
+// cartão de aviso: aparece uma vez para cada receita nova, em qualquer tela, com o app aberto
+const receitasAvisadas = () => { try { return JSON.parse(localStorage.getItem('sitio_receitas_avisadas')) || []; } catch (e) { return []; } };
+function verificarAvisoReceitas() {
+  const modal = $('#aviso-receita');
+  if (!modal || !modal.hidden || !S.codigo || S.tela === 'tela-acesso') return;
+  const avisadas = receitasAvisadas(), novas = receitasOrdenadas().filter(r => !avisadas.includes(r.id));
+  if (!novas.length) return;
+  const r = novas[0];
+  try { localStorage.setItem('sitio_receitas_avisadas', JSON.stringify([...avisadas, ...novas.map(x => x.id)].slice(-200))); } catch (e) {}
+  const talh = [...new Set(r.pendentes.map(p => p.talhao.replace('TALHÃO ', '')))].join(', ');
+  const fechar = () => { modal.hidden = true; modal.replaceChildren(); };
+  const abrir = () => {
+    if (S.emFormulario && !confirm('Você está preenchendo outro lançamento. Sair dele e abrir a receita? O que você digitou aqui será perdido.')) return;
+    fechar(); abrirReceita(r);
+  };
+  modal.className = 'modal-rec prio-' + Math.max(0, ORDEM_PRIO.indexOf(r.prioridade));
+  modal.replaceChildren(el('div', { class: 'cx' },
+    el('span', { class: 'prio grande-prio' }, rotuloPrio(r.prioridade)),
+    el('h2', {}, novas.length > 1 ? `${novas.length} novas receitas para aplicar` : 'Nova receita para aplicar'),
+    el('p', { class: 'cx-linha' }, el('b', {}, `${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}`)),
+    el('p', { class: 'cx-linha' }, `Talhão ${talh} · prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''}`),
+    r.justificativa ? el('p', { class: 'cx-sub' }, r.justificativa) : null,
+    novas.length > 1 ? el('p', { class: 'cx-sub' }, `Esta é a mais urgente. Há mais ${novas.length - 1} aguardando.`) : null,
+    el('button', { type: 'button', class: 'btn', onclick: abrir }, 'Abrir receita'),
+    novas.length > 1 ? el('button', { type: 'button', class: 'btn sec', onclick: () => { if (S.emFormulario && !confirm('Sair do lançamento atual? O que você digitou aqui será perdido.')) return; fechar(); abrirAplicar(); } }, 'Ver todas as receitas') : null,
+    el('button', { type: 'button', class: 'btn sec', onclick: fechar }, 'Depois')));
+  modal.hidden = false;
+  bip(); if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+}
+
+// tira da lista os talhões/áreas que este aparelho já aplicou mas ainda não enviou
+function descontarPares(lista, dados) {
+  const rec = (lista || []).find(x => x.id === dados.idReceita); if (!rec) return;
+  Object.keys(dados.itens || {}).forEach(t => Object.keys((dados.itens[t] || {}).areas || {}).forEach(a => {
+    rec.pendentes = rec.pendentes.filter(p => !(p.talhao === t && p.area === a));
+  }));
+  if (!rec.pendentes.length) lista.splice(lista.indexOf(rec), 1);
+}
+async function descontarFilaReceitas(lista) {
+  (await DB.todos()).forEach(i => { if (i.payload && i.payload.modulo === 'aplicacao_execucao') descontarPares(lista, i.payload.dados); });
+}
+
+let receitasAnteriores = null;
+async function atualizarReceitas() {
+  if (!navigator.onLine || !S.codigo) return;
+  try {
+    const r = await apiGet({ acao: 'receitas' });
+    if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo.'); return; }
+    if (!r.sucesso) return;
+    const lista = r.receitas || [];
+    await descontarFilaReceitas(lista);
+    const antes = receitasAnteriores; receitasAnteriores = lista.map(x => x.id);
+    S.dados.receitas = lista;
+    try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+    if (!$('#tela-menu').hidden) montarMenu(); else renderAlertaReceitas();
+    if (document.visibilityState === 'visible') verificarAvisoReceitas();
+  } catch (e) { /* sem sinal: mantém a lista guardada */ }
+}
+
+// ---- tela do aplicador ----
+function abrirAplicar() {
+  mostrar('tela-form'); S.tela = 'aplicar-lista'; $('#form-titulo').textContent = 'Aplicação (receitas)'; $('#form-ultimos').hidden = true;
+  marcarReceitasVistas();
+  const root = $('#form-root'); root.replaceChildren();
+  const lista = receitasOrdenadas();
+  if (!lista.length) { root.append(el('p', { class: 'sub' }, 'Nenhuma receita para aplicar agora. Quando o técnico lançar uma, ela aparece aqui e o aviso surge no menu.')); return; }
+  root.append(el('p', { class: 'sub' }, 'Toque na receita que você vai aplicar. As mais urgentes ficam no topo.'));
+  lista.forEach(r => {
+    const talh = [...new Set(r.pendentes.map(p => p.talhao.replace('TALHÃO ', '')))].join(', ');
+    root.append(el('button', { type: 'button', class: 'cartao-rec prio-' + Math.max(0, ORDEM_PRIO.indexOf(r.prioridade)), onclick: () => abrirReceita(r) },
+      el('span', { class: 'prio' }, rotuloPrio(r.prioridade)),
+      el('strong', {}, `${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}`),
+      el('span', { class: 'sub' }, `Talhão ${talh} · prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''}`),
+      el('span', { class: 'sub' }, r.id)));
+  });
+}
+function abrirReceita(r) {
+  mostrar('tela-form'); S.tela = 'aplicar-receita'; $('#form-ultimos').hidden = true;
+  marcaVista(r.id);
+  const root = $('#form-root'); $('#form-titulo').textContent = r.id;
+  montarForm(moduloAplicar(r), root, () => irMenu());
+  root.prepend(el('button', { type: 'button', class: 'link', onclick: abrirAplicar }, '← Voltar às receitas'));
+}
+
+const normTxt = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// produto "da mesma família": mesmo princípio ativo e mesma concentração. O que está no estoque aparece com o saldo.
+function equivalentes(p) {
+  const pa = normTxt(p.principio), conc = normTxt(p.concentracao);
+  const saldo = {}; (S.dados.estoque || []).forEach(e => { saldo[e.id] = e; });
+  const lista = [{ v: p.id, l: `${p.nome} (o da receita)` }];
+  (S.dados.produtos || []).forEach(c => {
+    if (c.id !== p.id && pa && conc && normTxt(c.principio) === pa && normTxt(c.concentracao) === conc) {
+      const e = saldo[c.id];
+      lista.push({ v: c.id, l: `${c.nome} (equivalente${e ? ` · estoque ${fmt(e.saldo)} ${e.un}` : ''})` });
+    }
+  });
+  return lista;
+}
+const doseTxt = p => p.pes ? `${fmt(p.dose, 3)} ${p.unidade} por talhão (${fmt(p.pes)} pés × ${fmt(p.dosePlanta, 3)})` : `${fmt(p.dose, 3)} ${p.unidade}`;
+function resumoReceita(r) {
+  const linhas = [`${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}  |  ${rotuloPrio(r.prioridade)}  |  prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''}`,
+    `Justificativa: ${r.justificativa}`, `Método: ${r.metodo}${r.volume ? ' · calda ' + r.volume : ''}${r.ph ? ' · pH ' + r.ph : ''}${r.vazao ? ' · vazão ' + r.vazao + ' L/ha' : ''}`];
+  if (r.carencia) linhas.push(`Carência: ${r.carencia} · Reentrada: ${r.reentrada || '24 Horas'}`);
+  if (r.aplicacao === 'MANEJO OPERACIONAL' && r.dataRealizacao) linhas.push(`Realizar em: ${fmtData(r.dataRealizacao)} ${String(r.dataRealizacao).slice(11, 16)}`);
+  const vistos = new Set();
+  r.talhoes.forEach(t => { if (r.pendentes.some(p => p.talhao === t.talhao) && !vistos.has(t.talhao)) { vistos.add(t.talhao); linhas.push(`${t.talhao}: ${t.avaliacao}${t.fase ? ' (' + t.fase + ')' : ''}`); } });
+  return linhas.join('\n');
+}
+
+// monta o formulário do aplicador para uma receita
+function moduloAplicar(r) {
+  const manejo = r.aplicacao === 'MANEJO OPERACIONAL';
+  const talhoes = [...new Set(r.pendentes.map(p => p.talhao))];
+  const areasDe = t => r.pendentes.filter(p => p.talhao === t).map(p => p.area);
+  const campos = [
+    { k: 'idReceita', t: 'text', l: 'Receita', def: r.id, ro: true, showIf: () => false },
+    { t: 'secao', l: r.id },
+    { t: 'info', show: () => resumoReceita(r) }
+  ];
+  if (!manejo) {
+    campos.push({ t: 'secao', l: '1. Confirme os produtos' });
+    r.produtos.forEach((p, i) => campos.push(
+      { t: 'info', show: () => `Produto ${i + 1} da receita: ${p.nome}\nPrincípio ativo: ${p.principio || '-'} · Concentração: ${p.concentracao}\nDose: ${doseTxt(p)}` },
+      { k: 'prod' + i, t: 'select', l: `Produto usado (${i + 1})`, def: p.id, opts: () => equivalentes(p) }));
+  }
+  campos.push({ t: 'secao', l: manejo ? 'Onde foi feito' : '2. Onde foi aplicado' },
+    { k: 'itens', t: 'multi', l: 'Talhões (marque os que você aplicou)', opts: talhoes, subTitle: v => v, sub: [
+      { k: 'areas', t: 'multi', l: 'Áreas deste talhão', opts: st => areasDe(st.__opt), subTitle: v => 'Área ' + v,
+        sub: manejo ? [{ k: 'inicio', t: 'datetime', l: 'Data e hora da realização', now: true }]
+                    : [{ k: 'inicio', t: 'datetime', l: 'Início', now: true }, { k: 'fim', t: 'datetime', l: 'Fim', now: true }] }
+    ] });
+  if (!manejo) campos.push(
+    { t: 'secao', l: '3. Máquina' },
+    { k: 'trator', t: 'select', l: 'Trator', outro: true, opts: TRATORES },
+    { k: 'marcha', t: 'text', l: 'Marcha' }, { k: 'rpm', t: 'number', l: 'RPM' }, { k: 'implemento', t: 'text', l: 'Implemento' },
+    { k: 'pressao', t: 'text', l: 'Pressão' }, { k: 'bico', t: 'text', l: 'Bico' },
+    { t: 'secao', l: '4. Condições' },
+    { k: 'condicoes', t: 'select', l: 'Condições meteorológicas', opts: ['Chuvoso', 'Ensolarado', 'Úmido', 'Condições Normais'] },
+    { k: 'vento', t: 'select', l: 'Velocidade do vento', opts: ['Forte', 'Fraco'] },
+    { t: 'secao', l: '5. Segurança' },
+    { k: 'epi', t: 'textarea', l: 'EPI', def: EPI_TXT },
+    { k: 'descarte', t: 'textarea', l: 'Cuidados com o descarte', def: DESCARTE_TXT },
+    { k: 'sobra', t: 'text', l: 'Sobra de calda', def: 'Não', ro: true });
+  campos.push({ t: 'secao', l: 'Fechamento' },
+    { k: 'aplicador', t: 'select', l: 'Aplicador', opts: RESP },
+    { k: 'assinatura', t: 'assinatura', l: 'Assinatura do aplicador' });
+  return { id: 'aplicacao_execucao', nome: 'Aplicação ' + r.id, campos, aoSalvar: V => { descontarPares(S.dados.receitas, V); renderAlertaReceitas(); } };
 }
 
 /* ---------- estoque ---------- */
@@ -1049,6 +1278,11 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('online', () => sincronizar()); window.addEventListener('offline', renderStatus);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
   setInterval(() => sincronizar(), 20000);
+  setInterval(() => atualizarReceitas(), 30000);   // alerta de receita nova para o aplicador (consulta leve a cada 30 s)
+  $('#sino-receitas').onclick = () => { if (S.emFormulario && !confirm('Sair do lançamento atual? O que você digitou aqui será perdido.')) return; abrirAplicar(); };
+  window.addEventListener('online', () => atualizarReceitas());
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') atualizarReceitas(); });
+  $('#alerta-receitas').onclick = () => abrirAplicar();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});   // permite abrir o app sem internet
   iniciarApp();
