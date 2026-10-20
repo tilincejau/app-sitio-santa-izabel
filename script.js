@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v15';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v16';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -65,6 +65,7 @@ const ICONES = {
   'send': '<path d="M7 17L17 7M8 7h9v9"/>',
   'clipboard': '<path d="M9 4h6v3H9zM7 5.5H5.5v15h13v-15H17"/><path d="M9 12h6M9 16h4"/>',
   'list-check': '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
+  'tractor': '<circle cx="7" cy="16.5" r="3.6"/><circle cx="18.6" cy="17.6" r="2.2"/><path d="M3.5 13V8h5.4l1.8 4.3H16V6h2.2v9.4"/><path d="M10.6 16.5h5.8"/>',
   'caret': '<path d="M9 6l6 6-6 6"/>'
 };
 function ico(nome) {
@@ -206,6 +207,12 @@ async function entrarComCodigo() {
   }
   btn.disabled = false; btn.textContent = 'Entrar';
 }
+// Baixa de novo as listas da planilha (produtos, motoristas, etc.). Só roda sem envios esperando, para não apagar o que ainda não foi enviado.
+async function atualizarListas() {
+  if (!navigator.onLine) return toast('Sem internet agora.', 'erro');
+  if ((await DB.todos()).some(i => i.status !== 'erro')) return toast('Há lançamentos esperando envio. Deixe enviar e depois atualize.', 'erro');
+  await atualizarDados(); toast('Listas atualizadas ✔');
+}
 function sairDoAparelho() {
   if (!confirm('Sair deste aparelho? Você vai precisar digitar o código de novo. O que ainda não foi enviado continua guardado.')) return;
   pedirAcesso();
@@ -245,10 +252,10 @@ const somaCaixas = itens => Object.values(itens || {}).reduce((t, o) => t + (par
 
 // ---- receita do técnico e aplicação ----
 const TRATORES = ['TR05', 'TR10', 'TR20 MASSEY GERGUSON 4275 - TRAÇADO 4X4', 'TR21 MASSEY GERGUSON 4275 - SIMPLES', 'TR22 NEW HOLLAND TL 5.80'];
-const APLICACOES_REC = ['PULVERIZAÇÃO', 'ADUBAÇÃO', 'HERBICIDA', 'DRENCH', 'MANEJO OPERACIONAL'];
+const APLICACOES_REC = ['PULVERIZAÇÃO', 'ADUBAÇÃO', 'HERBICIDA', 'DRENCH'];   // o manejo operacional é lançado só pelo aplicador
 const METODOS_REC = {
   'PULVERIZAÇÃO': ['Turbo atomizador'], 'ADUBAÇÃO': ['Adubadeira mecanizada', 'Via água de irrigação'],
-  'HERBICIDA': ['Barra de herbicida'], 'DRENCH': ['Máquina de drench'], 'MANEJO OPERACIONAL': ['Roçada', 'Poda', 'Desbrota']
+  'HERBICIDA': ['Barra de herbicida'], 'DRENCH': ['Máquina de drench']
 };
 const PRIORIDADES_REC = [
   { v: 'URGENTE', l: 'Urgente (imediato ou até 1 dia)' }, { v: 'ALTA', l: 'Alta prioridade (2 dias)' }, { v: 'MÉDIA', l: 'Média prioridade (3 dias)' },
@@ -257,8 +264,7 @@ const ORDEM_PRIO = ['URGENTE', 'ALTA', 'MÉDIA', 'BAIXA', 'MUITO BAIXA', 'PROGRA
 const rotuloPrio = p => ({ 'URGENTE': 'Urgente', 'ALTA': 'Alta prioridade', 'MÉDIA': 'Média prioridade', 'BAIXA': 'Baixa prioridade', 'MUITO BAIXA': 'Muito baixa', 'PROGRAMADO': 'Programado' }[p] || p);
 const FASES_REC = ['1. Indução e Botão Floral', '2. Florescimento (Antese)', '3. Frutificação', '4. Maturação e Colheita'];
 const PREVISOES_REC = ['Safra Principal (Jan - Mar)', 'Entressafra 1 (Abr - Jun)', 'Entressafra 2 (Jul - Set)', 'Tardia (Out - Dez)'];
-const NAO_MANEJO = V => !!V.aplicacao && V.aplicacao !== 'MANEJO OPERACIONAL';
-const E_MANEJO = V => V.aplicacao === 'MANEJO OPERACIONAL';
+const NAO_MANEJO = V => !!V.aplicacao;
 const JUSTIFICATIVAS_REC = ['Controle Preventivo (Calendário)', 'Controle de Pragas (Monitoramento)', 'Controle de Doenças Fúngicas/Bacterianas', 'Controle de Plantas Daninhas',
   'Adubação de Produção / Manutenção', 'Adubação de Estimulação (Floração)', 'Correção de Deficiência Nutricional', 'Recomendação Baseada em Análise de Solo/Folha', 'Controle do Greening'];
 const PSI_COM_PRODUTO = /^(Sim|Repasse)/;   // controle com aplicação: pede produtos e quem aplicou
@@ -290,7 +296,6 @@ const MODULOS = [
       { t: 'info', show: () => 'O alvo da receita é o que você descreveu na avaliação técnica de cada talhão.' },
       { k: 'metodo', t: 'select', l: 'Método de aplicação', outro: true, opcoesDe: V => METODOS_REC[V.aplicacao] || [],
         padraoDe: V => ['PULVERIZAÇÃO', 'HERBICIDA', 'DRENCH'].includes(V.aplicacao) ? METODOS_REC[V.aplicacao][0] : undefined },
-      { k: 'dataRealizacao', t: 'datetime', l: 'Data e hora da realização', now: true, showIf: E_MANEJO },
       { k: 'volume', t: 'select', l: 'Volume de calda', outro: true, opts: ['4000 Litros', '2000 Litros', '1000 Litros', '400 Litros'], showIf: NAO_MANEJO },
       { k: 'ph', t: 'number', l: 'pH', showIf: NAO_MANEJO },
       { k: 'vazao', t: 'number', l: 'Vazão (L/ha)', showIf: NAO_MANEJO },
@@ -307,6 +312,20 @@ const MODULOS = [
 
   { id: 'receitas_abertas', nome: 'Receitas em aberto', icone: 'ph-list-check', custom: () => abrirReceitasAbertas() },
   { id: 'aplicar', nome: 'Aplicação (receitas)', icone: 'ph-flask', custom: () => abrirAplicar() },
+
+  { id: 'manejo', nome: 'Manejo operacional', icone: 'ph-tractor',
+    campos: [
+      { t: 'secao', l: 'Manejo operacional' },
+      { t: 'info', show: () => 'Informe a operação, os talhões e áreas e a data e hora da realização.' },
+      { k: 'operacao', t: 'select', l: 'Operação', outro: true, opts: ['Roçada', 'Poda', 'Desbrota'] },
+      { k: 'itens', t: 'multi', l: 'Talhões (pode marcar vários)', opts: ['TALHÃO 1', 'TALHÃO 2', 'TALHÃO 3', 'TALHÃO 4'], subTitle: v => v, sub: [
+        { k: 'areas', t: 'multi', l: 'Áreas deste talhão', opts: ['A', 'B'], subTitle: v => 'Área ' + v,
+          sub: [{ k: 'inicio', t: 'datetime', l: 'Data e hora da realização', now: true }] }
+      ] },
+      { t: 'secao', l: 'Fechamento' },
+      { k: 'aplicador', t: 'select', l: 'Aplicador', opts: RESP },
+      { k: 'assinatura', t: 'assinatura', l: 'Assinatura do aplicador' }
+    ] },
 
   { id: 'hidrometro', nome: 'Hidrômetro', icone: 'ph-gauge',
     campos: [
@@ -857,10 +876,12 @@ function ultimoTexto(m) {
 function montarMenu() {
   renderAlertaReceitas();
   const g = $('#grid-modulos'); g.replaceChildren();
-  MODULOS.filter(m => !(['receita', 'receitas_abertas'].includes(m.id) && S.perfil === 'aplicador'))
+  MODULOS.filter(m => !(['receita', 'receitas_abertas'].includes(m.id) && S.perfil === 'aplicador') && !(m.id === 'manejo' && S.perfil === 'tecnico'))
     .forEach(m => g.append(el('button', { class: 'mod' + (m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length ? ' alerta' : ''), onclick: () => abrirModulo(m) },
     el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)))));
-  g.append(el('p', { class: 'versao' }, `Versão ${APP_VERSAO}${S.nome ? ' · ' + S.nome + ' · ' : ' · '}`, el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: sairDoAparelho }, 'sair')));
+  g.append(el('p', { class: 'versao' }, `Versão ${APP_VERSAO}${S.nome ? ' · ' + S.nome : ''} · `,
+    el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: atualizarListas }, 'atualizar listas'), ' · ',
+    el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: sairDoAparelho }, 'sair')));
 }
 
 function abrirModulo(m) {
@@ -1114,8 +1135,9 @@ function moduloAplicar(r) {
   if (!manejo) campos.push(
     { t: 'secao', l: '3. Máquina' },
     { k: 'trator', t: 'select', l: 'Trator', outro: true, opts: TRATORES },
-    { k: 'marcha', t: 'text', l: 'Marcha' }, { k: 'rpm', t: 'number', l: 'RPM' }, { k: 'implemento', t: 'text', l: 'Implemento' },
-    { k: 'pressao', t: 'text', l: 'Pressão' }, { k: 'bico', t: 'text', l: 'Bico' },
+    { k: 'marcha', t: 'text', l: 'Marcha', def: '2° Reduzida', ro: true }, { k: 'rpm', t: 'number', l: 'RPM', def: '2200', ro: true },
+    { k: 'implemento', t: 'text', l: 'Implemento', def: 'Jacto 4000l', ro: true },
+    { k: 'pressao', t: 'text', l: 'Pressão', def: '200lb', ro: true }, { k: 'bico', t: 'text', l: 'Bico', def: '5 difusor 3 e 2', ro: true },
     { t: 'secao', l: '4. Condições' },
     { k: 'condicoes', t: 'select', l: 'Condições meteorológicas', opts: ['Chuvoso', 'Ensolarado', 'Úmido', 'Condições Normais'] },
     { k: 'vento', t: 'select', l: 'Velocidade do vento', opts: ['Forte', 'Fraco'] },
