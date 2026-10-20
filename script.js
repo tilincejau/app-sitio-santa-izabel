@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v23';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v24';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -291,7 +291,7 @@ const parseDH = s => { const d = new Date(s); return isNaN(d) ? null : d; };
 const MODULOS = [
   { id: 'mapa_bf', nome: 'Mapa das armadilhas', icone: 'ph-map', custom: () => abrirMapaBF() },
 
-  { id: 'receita', nome: 'Visita técnica (receita)', icone: 'ph-clipboard',
+  { id: 'receita', nome: 'Visita técnica', icone: 'ph-clipboard',
     campos: [
       { t: 'secao', l: 'Visita técnica' },
       { t: 'info', show: () => 'Agrônomo: Vinicius Soleira de Oliveira\nCultura: Lima Ácida · Variedade: Tahiti' },
@@ -479,11 +479,11 @@ const MODULOS = [
       resp(), assin()
     ] },
 
-  { id: 'psilideo', nome: 'Monitoramento Psilídeo / HLB', icone: 'ph-bug',
+  { id: 'psilideo', nome: 'Monitoramento Psilídeo', icone: 'ph-bug',
     campos: [
       { t: 'secao', l: 'Local' },
       { t: 'info', show: () => 'Produtor: Flávia Freitas Pinto Ferreira\nPropriedade: Sítio Santa Izabel\nVariedade: Lima Ácida Tahiti' },
-      { k: 'up', t: 'select', l: 'UP / Talhão (identificação A ou B)', opts: UPS },
+      { k: 'up', t: 'select', l: 'Talhão', opts: TALHOES },
       { k: 'areaHa', t: 'number', l: 'Área (ha)', ro: true, preChave: V => V.up, pre: V => infoTalhao(V.up).ha != null ? String(infoTalhao(V.up).ha) : '' },
       { k: 'metodo', t: 'text', l: 'Método utilizado', def: 'Armadilha adesiva', ro: true },
       { k: 'nPontos', t: 'number', l: 'Nº de pontos / plantas avaliadas', ro: true, preChave: V => V.up, pre: V => String(pesDe(talhaoDe(V.up)) || '') },
@@ -591,7 +591,7 @@ const MODULOS = [
       { k: 'assinaturaMonitor', t: 'assinatura', l: 'Assinatura do responsável pelo monitoramento' }
     ] },
 
-  { id: 'expedicao', nome: 'Expedição (talão de cargas)', icone: 'ph-send',
+  { id: 'expedicao', nome: 'Expedição', icone: 'ph-send',
     aoSalvar: V => ajustarCaixasLocal('SAÍDA', String(V.destino || '').trim().toUpperCase(), somaCaixas(V.itens)),
     campos: [
       { t: 'secao', l: 'Carga' },
@@ -618,7 +618,7 @@ const MODULOS = [
       if (String(V.placa || '').replace(/[^A-Za-z0-9]/g, '').length < 7) return 'Confira a placa: ela tem 7 letras e números.';
     } },
 
-  { id: 'estoque', nome: 'Estoque e diesel', icone: 'ph-package', custom: () => abrirEstoque() }
+  { id: 'estoque', nome: 'Estoque', icone: 'ph-package', custom: () => abrirEstoque() }
 ];
 
 // telas de estoque (usam o mesmo motor)
@@ -960,12 +960,28 @@ function ultimoTexto(m) {
   if (!r) return '';
   return `Último: ${String(r[0]).slice(0, 10)}`;
 }
+// Seções do menu, na ordem de cada uma. Para renomear uma seção ou mudar um bloco de lugar, é só editar esta lista.
+const SECOES_MENU = [
+  { titulo: 'Aplicação e monitoramento', ids: ['receitas_abertas', 'receita', 'aplicar', 'manejo', 'psilideo', 'bichofurao', 'mapa_bf'] },
+  { titulo: 'Água e irrigação', ids: ['hidrometro', 'irrigacao', 'tensiometro', 'pluviometro'] },
+  { titulo: 'Limpeza', ids: ['limpeza_local', 'limpeza_equip', 'hidrorepelente'] },
+  { titulo: 'Diesel', ids: ['abastecimento', 'diesel'] },
+  { titulo: 'Expedição', ids: ['expedicao'] },
+  { titulo: 'Estoque', ids: ['estoque'] }
+];
 function montarMenu() {
   renderAlertaReceitas();
   const g = $('#grid-modulos'); g.replaceChildren();
-  MODULOS.filter(m => !(['receita', 'receitas_abertas'].includes(m.id) && S.perfil === 'aplicador') && !(m.id === 'manejo' && S.perfil === 'tecnico'))
-    .forEach(m => g.append(el('button', { class: 'mod' + classeAlertaModulo(m), onclick: () => abrirModulo(m) },
-    el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)))));
+  const visivel = m => !(['receita', 'receitas_abertas'].includes(m.id) && S.perfil === 'aplicador') && !(m.id === 'manejo' && S.perfil === 'tecnico');
+  const bloco = m => el('button', { class: 'mod' + classeAlertaModulo(m), onclick: () => abrirModulo(m) },
+    el('span', { class: 'ic' }, ico(m.icone.replace('ph-', ''))), el('b', {}, m.nome), el('small', {}, ultimoTexto(m)));
+  const porId = Object.fromEntries(MODULOS.map(m => [m.id, m]));
+  const secao = (n, titulo, mods) => g.append(el('section', { class: 'menu-secao' },
+    el('h2', { class: 'menu-titulo' }, el('span', { class: 'menu-num' }, String(n)), titulo), el('div', { class: 'menu' }, mods.map(bloco))));
+  let n = 0;
+  SECOES_MENU.forEach(sec => { const mods = sec.ids.map(id => porId[id]).filter(m => m && visivel(m)); if (mods.length) secao(++n, sec.titulo, mods); });
+  const usados = new Set(SECOES_MENU.flatMap(x => x.ids)), sobras = MODULOS.filter(m => !usados.has(m.id) && visivel(m));
+  if (sobras.length) secao(++n, 'Outros', sobras);   // garantia: um bloco que não está em nenhuma seção não some
   g.append(el('p', { class: 'versao' }, `Versão ${APP_VERSAO}${S.nome ? ' · ' + S.nome : ''} · `,
     el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: atualizarListas }, 'atualizar listas'), ' · ',
     el('button', { type: 'button', class: 'link', style: 'margin:0;padding:0;font-size:12px', onclick: sairDoAparelho }, 'sair')));
