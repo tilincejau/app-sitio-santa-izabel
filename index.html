@@ -35,6 +35,7 @@
   <section id="tela-menu" class="tela" hidden>
     <header class="marca"><img src="logo.png" alt="Sítio Santa Izabel"></header>
     <button id="status-sync" class="painel" type="button"></button>
+    <button id="alerta-receitas" class="alerta-rec" type="button" hidden></button>
     <main id="grid-modulos" class="menu"></main>
   </section>
 
@@ -66,6 +67,10 @@
     </header>
     <main id="pendencias-root" class="form"></main>
   </section>
+
+  <!-- AVISO DE NOVA RECEITA -->
+  <div id="aviso-receita" class="modal-rec" role="alertdialog" aria-live="assertive" hidden></div>
+  <button id="sino-receitas" class="sino" type="button" aria-label="Receitas para aplicar" hidden></button>
 
   <script src="script.js"></script>
 </body>
