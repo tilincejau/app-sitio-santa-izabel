@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v24';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v26';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -162,7 +162,7 @@ async function atualizarDados() {
     if ((await DB.todos()).some(i => i.status !== 'erro')) return;   // com envios pendentes, não troca a lista local
     const r = await apiGet({ acao: 'dados' });
     if (r.codigo === 'AUTH') { pedirAcesso('Seu acesso foi encerrado ou o código mudou. Digite o código novo.'); return; }
-    if (r.sucesso) { S.dados = r; S.dadosFrescos = true; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); S.dados.lavagens = await ajustarLavagensComFila(S.dados.lavagens || []); S.dados.diesel = await dieselComFila(S.dados.diesel); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); verificarAvisoHidrometro(); }
+    if (r.sucesso) { S.dados = r; S.dadosFrescos = true; if (r.perfil) { S.perfil = r.perfil; localStorage.setItem('sitio_perfil', S.perfil); } await descontarFilaReceitas(S.dados.receitas); S.dados.lavagens = await ajustarLavagensComFila(S.dados.lavagens || []); S.dados.diesel = await dieselComFila(S.dados.diesel); S.dados.chegadas = await ajustarChegadasComFila(S.dados.chegadas || []); ultimaAtualizacao = Date.now(); localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); montarMenu(); verificarAvisoReceitas(); verificarAvisoHidrometro(); }
   } catch (e) { /* sem sinal: segue com o que já está guardado */ }
 }
 
@@ -631,7 +631,7 @@ const FORM_CONTAGEM = { id: 'estoque_contagem', nome: 'Contagem', campos: [
 // Chegou produto: só a foto da nota fiscal. O saldo do produto se acerta pela contagem, na aba Posição.
 const formNota = p => ({ id: 'estoque_nota', nome: 'Nota fiscal recebida',
   campos: [
-    { t: 'info', show: () => p ? `Produto: ${p.nome}\nTire a foto da nota fiscal do que chegou.` : 'Tire a foto da nota fiscal do que chegou.' },
+    ...(p ? [{ t: 'info', show: () => `Produto: ${p.nome}\nTire a foto da nota fiscal do que chegou.` }] : []),
     { k: 'produtoRef', t: 'text', l: 'Produto', def: p ? p.nome : '', ro: true, showIf: () => false },
     { k: 'quando', t: 'text', l: 'Quando', ro: true, showIf: () => false, preChave: () => 'agora', pre: () => agora() },
     { k: 'foto', t: 'foto', l: 'Foto da nota fiscal' },
@@ -951,6 +951,7 @@ function montarForm(m, container, onSalvo) {
 /* ---------- navegação dos módulos ---------- */
 function ultimoTexto(m) {
   if (m.id === 'estoque' && dieselEmAlerta()) return `Diesel: ${fmt(S.dados.diesel.litros, 0)} L`;
+  if (m.id === 'estoque' && chegadas().length) return `${chegadas().length} ${chegadas().length === 1 ? 'chegada' : 'chegadas'} para aprovar`;
   if (m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) return 'Leitura do mês pendente';
   if (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length) { const n = lavagensDoUsuario().length; return `${n} ${n === 1 ? 'lavagem pendente' : 'lavagens pendentes'}`; }
   if (m.id === 'receitas_abertas') { const n = (S.dados.receitas || []).length; return n ? `${n} em aberto` : 'Nenhuma em aberto'; }
@@ -1075,6 +1076,124 @@ function abrirMapaBF() {
   root.append(el('a', { class: 'btn', href: `https://www.google.com/maps/dir/${pontos.map(p => `${p.lat},${p.lng}`).join('/')}`, target: '_blank', rel: 'noopener', style: 'text-align:center;text-decoration:none' }, 'Ver todos no Google Maps'));
   root.append(el('button', { type: 'button', class: 'btn sec', onclick: () => baixarKml(pontos) }, 'Baixar o mapa (arquivo KML)'));
   root.append(el('p', { class: 'sub' }, 'O arquivo KML abre no Google Earth e no Google Meu Mapas, com um marcador em cada talhão. Para trocar a coordenada de um talhão, corrija na aba coordenadas_talhao da planilha.'));
+}
+
+/* =========================================================
+   CHEGADA DE PRODUTOS PELA NOTA FISCAL (relatório do DANFE View): o usuário aprova o que chegou
+   ========================================================= */
+const UN_NF = { GL: ['galão', 'galões'], BAL: ['balde', 'baldes'], PCT: ['pacote', 'pacotes'], SAC: ['saco', 'sacos'], SC: ['saco', 'sacos'], UN: ['unidade', 'unidades'], UND: ['unidade', 'unidades'],
+  CX: ['caixa', 'caixas'], 'PC-': ['peça', 'peças'], PC: ['peça', 'peças'], KG: ['kg', 'kg'], L: ['litro', 'litros'], LT: ['litro', 'litros'] };
+const nomeUnNF = (un, n) => (UN_NF[String(un).toUpperCase()] || [String(un).toLowerCase(), String(un).toLowerCase()])[n === 1 ? 0 : 1];
+const chegadas = () => S.dados.chegadas || [];
+// o que já foi aprovado/recusado neste celular e ainda não foi enviado sai da lista
+async function ajustarChegadasComFila(lista) {
+  const feitos = new Set((await DB.todos()).filter(i => i.status !== 'erro' && i.payload && i.payload.modulo === 'nfe_aprovar').map(i => i.payload.dados.id));
+  return lista.filter(c => !feitos.has(c.id));
+}
+function textoEmbalagem(c) {
+  if (c.embValor > 0 && !['L', 'KG', 'LT'].includes(String(c.unNF).toUpperCase()))
+    return `${fmt(c.qtdNF)} ${nomeUnNF(c.unNF, c.qtdNF)} × ${fmt(c.embValor)} ${c.embUn} = ${fmt(c.totalQtd)} ${c.totalUn}`;
+  return `${fmt(c.totalQtd)} ${c.totalUn}`;
+}
+function renderAlertaChegadas() {
+  const box = $('#alerta-chegadas'); if (!box) return;
+  const n = chegadas().length;
+  if (!n) { box.hidden = true; return; }
+  box.hidden = false; box.className = 'alerta-rec prio-3';
+  box.replaceChildren(el('span', { class: 'alerta-txt' },
+    el('b', {}, n === 1 ? 'Chegou 1 produto na nota fiscal: aprove' : `Chegaram ${n} produtos nas notas fiscais: aprove`),
+    el('small', {}, 'Confirme o que chegou para entrar no estoque')),
+    el('span', { class: 'prio' }, 'Aprovar'));
+}
+async function enviarAprovacao(c, dados, aviso) {
+  const id = uid();
+  const payload = { acao: 'salvar', modulo: 'nfe_aprovar', id_transacao: id, dados: { id: c.id, ...dados }, novasListas: [] };
+  if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: `${dados.decisao === 'ignorar' ? 'Recusa' : 'Chegada'}: ${c.nome}` }))) return false;
+  S.dados.chegadas = chegadas().filter(x => x.id !== c.id);
+  try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+  toast(aviso); renderAlertaReceitas(); sincronizar();
+  return true;
+}
+function cartaoChegada(c, redesenhar) {
+  const diesel = c.tipo === 'DIESEL', exigePA = c.tipo === 'DEFENSIVO';   // defensivo sem princípio ativo não serve para achar produto equivalente
+  const noCadastro = (S.dados.produtos || []).find(p => p.id === c.sugestaoId);
+  // só aprova direto o que já foi confirmado antes (e, no defensivo, já tem princípio ativo); uma sugestão parecida pede conferência
+  const pronto = diesel || (c.sugestaoId && c.dicionario && (!exigePA || c.principio || (noCadastro && noCadastro.principio)));
+  const painel = el('div', { class: 'painel-prod', hidden: true });
+  const sel = el('select', {}, el('option', { value: '' }, 'Escolha o produto do cadastro…'),
+    ...(S.dados.produtos || []).map(p => el('option', { value: p.id, selected: p.id === c.sugestaoId ? true : null }, p.nome)), el('option', { value: 'NOVO', selected: !c.sugestaoId ? true : null }, 'É um produto novo (cadastrar)'));
+  const nome = el('input', { type: 'text', value: c.nome, autocomplete: 'off' }), pa = el('input', { type: 'text', value: c.principio, placeholder: 'Princípio ativo', autocomplete: 'off' });
+  const classe = el('select', {}, el('option', { value: '' }, 'Classe toxicológica (se tiver)'), ...(S.dados.classes || []).map(x => el('option', { value: x }, x)));
+  const conc = el('input', { type: 'text', value: c.concentracao, placeholder: 'Concentração (ex.: 84 SC)', autocomplete: 'off' });
+  const qtd = el('input', { type: 'number', inputmode: 'decimal', step: 'any', value: String(c.totalQtd) });
+  const un = el('select', {}, ['L', 'ML', 'KG', 'G', 'UN'].map(u => el('option', { value: u, selected: u === c.totalUn ? true : null }, u)));
+  const novo = el('div', {}, el('label', { class: 'rot' }, 'Nome do produto'), nome, el('label', { class: 'rot' }, 'Classe'), classe);
+  const paBox = el('div', {}, el('label', { class: 'rot' }, exigePA ? (c.principio ? 'Princípio ativo' : 'Princípio ativo (a nota não traz: digite) *') : 'Princípio ativo (se tiver)'), pa);
+  const escolhido = () => (S.dados.produtos || []).find(p => p.id === sel.value);
+  // o princípio ativo aparece no produto novo e também quando o produto do cadastro está sem princípio ativo
+  const atualiza = () => { const n = sel.value === 'NOVO'; novo.hidden = !n; paBox.hidden = !(n || (escolhido() && !escolhido().principio)); };
+  sel.addEventListener('change', atualiza); atualiza();
+  const confirmar = el('button', { type: 'button', class: 'btn' }, 'Confirmar que chegou');
+  confirmar.onclick = async () => {
+    const q = numero(qtd.value);
+    if (!(q > 0)) return toast('Informe a quantidade que chegou.', 'erro');
+    if (!diesel && !sel.value) return toast('Escolha o produto ou marque como produto novo.', 'erro');
+    if (!diesel && sel.value === 'NOVO' && !nome.value.trim()) return toast('Escreva o nome do produto novo.', 'erro');
+    if (!diesel && exigePA && !paBox.hidden && !pa.value.trim()) { pa.focus(); return toast('Digite o princípio ativo do produto (a nota não traz).', 'erro'); }
+    confirmar.disabled = true;
+    const ok = await enviarAprovacao(c, { decisao: 'aprovar', produtoId: diesel ? '' : sel.value, nome: nome.value.trim(), principio: pa.value.trim(), classe: classe.value, concentracao: conc.value.trim(), quantidade: String(q), unidade: un.value }, 'Chegada aprovada ✔ Entra no estoque quando enviar');
+    if (ok) redesenhar(); else confirmar.disabled = false;
+  };
+  painel.append(...(diesel ? [] : [el('label', { class: 'rot' }, 'Produto no cadastro'), sel, novo, paBox, el('label', { class: 'rot' }, 'Concentração'), conc]),
+    el('label', { class: 'rot' }, diesel ? 'Litros que chegaram' : 'Quanto chegou (total)'), el('div', { class: 'duplo' }, qtd, un), confirmar);
+  const rapido = el('button', { type: 'button', class: 'btn' }, 'Chegou ✔');
+  rapido.onclick = async () => {
+    if (!pronto) { painel.hidden = false; if (exigePA && !paBox.hidden && !pa.value.trim()) pa.focus(); return toast(exigePA && !c.principio ? 'A nota não traz o princípio ativo: digite e confirme.' : 'Confira o produto e a quantidade e confirme.'); }
+    rapido.disabled = true;
+    const ok = await enviarAprovacao(c, { decisao: 'aprovar', produtoId: diesel ? '' : c.sugestaoId, nome: c.nome, principio: c.principio, concentracao: c.concentracao, quantidade: String(c.totalQtd), unidade: c.totalUn }, 'Chegada aprovada ✔ Entra no estoque quando enviar');
+    if (ok) redesenhar(); else rapido.disabled = false;
+  };
+  const recusar = el('button', { type: 'button', class: 'btn sec' }, 'Não chegou');
+  recusar.onclick = async () => { if (!confirm(`Marcar como NÃO chegou?\n\n${c.nome} (NF ${c.nf})`)) return; if (await enviarAprovacao(c, { decisao: 'ignorar' }, 'Marcado como não chegou')) redesenhar(); };
+  return el('div', { class: 'cartao' },
+    el('strong', {}, c.nome), el('span', { class: 'sub', style: 'display:block' }, diesel ? 'Diesel' : (c.principio ? `Princípio ativo: ${c.principio}` : (exigePA ? 'Princípio ativo: a nota não traz (será pedido ao aprovar)' : 'Sem princípio ativo na nota'))),
+    el('span', { class: 'sub', style: 'display:block' }, `NF ${c.nf} · ${fmtData(c.emissao)}${c.concentracao ? ' · ' + c.concentracao : ''}`),
+    el('span', { style: 'display:block;margin:6px 0;font-weight:700;color:var(--verde)' }, textoEmbalagem(c)),
+    !diesel ? el('span', { class: 'sub', style: 'display:block' }, c.sugestaoId ? `No cadastro: ${c.sugestaoNome}${c.dicionario ? ' (já confirmado antes)' : ' (confira)'}` : 'Produto ainda não cadastrado') : null,
+    c.lote ? el('span', { class: 'sub', style: 'display:block' }, `Lote ${c.lote}${c.validade ? ' · validade ' + c.validade : ''}`) : null,
+    el('div', { class: 'duplo', style: 'margin-top:10px' }, rapido, el('button', { type: 'button', class: 'btn sec', onclick: () => { painel.hidden = !painel.hidden; } }, 'Ajustar…')),
+    recusar, painel);
+}
+// lê o arquivo do DANFE View (acentos em Latin-1; se vier em UTF-8, lê de novo assim)
+function lerArquivoTexto(f, cod) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsText(f, cod); }); }
+async function importarRelatorioNfe(f, status, redesenhar) {
+  try {
+    let texto = await lerArquivoTexto(f, 'ISO-8859-1');
+    if (/Ã[§£©ª³µ]/.test(texto)) texto = await lerArquivoTexto(f, 'UTF-8');
+    status.textContent = 'Lendo o relatório…';
+    const r = await api({ acao: 'nfe_importar', csv: texto, nome: f.name });
+    if (!r.sucesso) throw new Error(r.erro || 'Não foi possível importar');
+    S.dados.chegadas = await ajustarChegadasComFila(r.chegadas || []);
+    try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+    const x = r.resumo;
+    const msg = `Importado: ${x.novos} produto(s) novo(s) para aprovar · ${x.repetidos} já importado(s) · ${x.foraDoEstoque} item(ns) fora do estoque agrícola${x.cancelados ? ' · ' + x.cancelados + ' cancelado(s)' : ''}.`;
+    toast(x.novos ? `${x.novos} produto(s) para aprovar ✔` : 'Nenhum produto novo neste relatório'); renderAlertaReceitas(); redesenhar(msg);
+  } catch (e) { status.textContent = ''; toast(/fetch|Failed|network/i.test(e.message) ? 'Sem internet: importe de novo quando conectar.' : e.message, 'erro'); }
+}
+function renderChegou(root, msg) {
+  root.replaceChildren();
+  const lista = chegadas();
+  root.append(el('h3', { class: 'secao' }, lista.length ? `Para aprovar (${lista.length})` : 'Para aprovar'));
+  if (lista.length) lista.forEach(c => root.append(cartaoChegada(c, () => { renderChegou(root); renderAlertaReceitas(); })));
+  else root.append(el('p', { class: 'sub' }, 'Nenhum produto esperando aprovação. Quando um relatório do DANFE View for importado, os produtos que chegaram aparecem aqui.'));
+  const status = el('p', { class: 'sub' }, msg || '');
+  const arq = el('input', { type: 'file', accept: '.csv,text/csv', hidden: true, onchange: ev => { const f = ev.target.files[0]; if (f) importarRelatorioNfe(f, status, m => renderChegou(root, m)); ev.target.value = ''; } });
+  root.append(el('h3', { class: 'secao' }, 'Importar o relatório do DANFE View'),
+    el('p', { class: 'sub' }, 'No DANFE View, exporte o relatório de documentos em CSV e escolha o arquivo aqui. Só entram defensivos, adubos, feromônios e diesel; o resto é ignorado.'),
+    el('label', { class: 'btn sec', style: 'display:block;text-align:center;cursor:pointer' }, 'Escolher o arquivo do relatório (.csv)', arq), status);
+  root.append(el('h3', { class: 'secao' }, 'Chegou sem relatório?'), el('p', { class: 'sub' }, 'Tire a foto da nota fiscal.'));
+  const cx = el('div'); root.append(cx);
+  montarForm(formNota(null), cx, () => { abrirEstoque('posicao'); });
 }
 
 /* =========================================================
@@ -1256,7 +1375,7 @@ function mostrarBloqueioLavagem(l) {
       el('button', { type: 'button', class: 'btn', onclick: () => abrirModulo(moduloHidrorep()) }, 'Lançar a lavagem agora')),
     el('button', { type: 'button', class: 'link', onclick: abrirAplicar }, '← Voltar às receitas'));
 }
-const classeAlertaModulo = m => ((m.id === 'estoque' && dieselEmAlerta()) || (m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) || (m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length) || (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length)) ? ' alerta' : '';
+const classeAlertaModulo = m => ((m.id === 'estoque' && (dieselEmAlerta() || chegadas().length)) || (m.id === 'hidrometro' && recebeAviso() && hidrometroPendente()) || (m.id === 'aplicar' && recebeAviso() && (S.dados.receitas || []).length) || (m.id === 'hidrorepelente' && recebeAviso() && lavagensDoUsuario().length)) ? ' alerta' : '';
 
 /* =========================================================
    RECEITA (técnico) E APLICAÇÃO (aplicador)
@@ -1269,6 +1388,7 @@ function marcarReceitasVistas() { try { localStorage.setItem('sitio_receitas_vis
 
 // faixa no topo do menu: avisa que há receita e mostra a prioridade
 function renderAlertaReceitas() {
+  renderAlertaChegadas();
   renderAlertaDiesel();
   renderAlertaHidrometro();
   renderAlertaLavagem();
@@ -1368,6 +1488,7 @@ async function atualizarReceitas() {
     await descontarFilaReceitas(lista);
     if (Array.isArray(r.lavagens)) S.dados.lavagens = await ajustarLavagensComFila(r.lavagens.slice());
     if (r.diesel) S.dados.diesel = await dieselComFila(r.diesel);
+    if (Array.isArray(r.chegadas)) S.dados.chegadas = await ajustarChegadasComFila(r.chegadas.slice());
     if (r.hidro) {   // mantém a leitura mais nova (a de outro celular ou a que ainda está na fila deste)
       const est = S.dados.estado = S.dados.estado || {}; est.hidro = est.hidro || {};
       Object.keys(r.hidro).forEach(h => { if (!est.hidro[h] || String(r.hidro[h].data) >= String(est.hidro[h].data)) est.hidro[h] = r.hidro[h]; });
@@ -1545,7 +1666,7 @@ function abrirEstoque(aba) {
   [['posicao', 'Posição'], ['resumo', 'Resumo'], ['entrada', 'Chegou produto'], ['diesel', 'Diesel'], ['caixas', 'Caixas']].forEach(([id, nome]) =>
     abas.append(el('button', { class: id === abaEstoque ? 'on' : '', onclick: () => { produtoEntrada = null; dieselMedindo = false; abrirEstoque(id); } }, nome)));
   const root = $('#estoque-root');
-  if (abaEstoque === 'entrada') montarForm(formNota(produtoEntrada), root, () => { produtoEntrada = null; abrirEstoque('posicao'); });
+  if (abaEstoque === 'entrada') { if (produtoEntrada) montarForm(formNota(produtoEntrada), root, () => { produtoEntrada = null; abrirEstoque('posicao'); }); else renderChegou(root); }
   else if (abaEstoque === 'diesel') { if (dieselMedindo) montarForm(FORM_MEDICAO_DIESEL, root, () => { dieselMedindo = false; abrirEstoque('diesel'); }); else renderDiesel(root); }
   else if (abaEstoque === 'caixas') renderCaixas(root);
   else if (abaEstoque === 'resumo') renderResumo(root);
@@ -1753,6 +1874,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#alerta-lavagem').onclick = () => abrirModulo(moduloHidrorep());
   $('#alerta-hidrometro').onclick = () => abrirModulo(moduloHidrometro());
   $('#alerta-diesel').onclick = () => { dieselMedindo = false; abrirEstoque('diesel'); };
+  $('#alerta-chegadas').onclick = () => { produtoEntrada = null; abrirEstoque('entrada'); };
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();   // pede ao navegador para não apagar os dados guardados
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});   // permite abrir o app sem internet
   iniciarApp();
