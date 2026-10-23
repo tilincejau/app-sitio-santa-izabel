@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v27';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v28';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -1108,7 +1108,7 @@ function renderAlertaChegadas() {
 async function enviarAprovacao(c, dados, aviso) {
   const id = uid();
   const payload = { acao: 'salvar', modulo: 'nfe_aprovar', id_transacao: id, dados: { id: c.id, ...dados }, novasListas: [] };
-  if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: `${dados.decisao === 'ignorar' ? 'Recusa' : 'Chegada'}: ${c.nome}` }))) return false;
+  if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: `${dados.decisao === 'ignorar' ? 'Nota excluída do app' : 'Chegada'}: ${c.nome}` }))) return false;
   S.dados.chegadas = chegadas().filter(x => x.id !== c.id);
   try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
   toast(aviso); renderAlertaReceitas(); sincronizar();
@@ -1153,8 +1153,11 @@ function cartaoChegada(c, redesenhar) {
     const ok = await enviarAprovacao(c, { decisao: 'aprovar', produtoId: diesel ? '' : c.sugestaoId, nome: c.nome, principio: c.principio, concentracao: c.concentracao, quantidade: String(c.totalQtd), unidade: c.totalUn }, 'Chegada aprovada ✔ Entra no estoque quando enviar');
     if (ok) redesenhar(); else rapido.disabled = false;
   };
-  const recusar = el('button', { type: 'button', class: 'btn sec' }, 'Não chegou');
-  recusar.onclick = async () => { if (!confirm(`Marcar como NÃO chegou?\n\n${c.nome} (NF ${c.nf})`)) return; if (await enviarAprovacao(c, { decisao: 'ignorar' }, 'Marcado como não chegou')) redesenhar(); };
+  const recusar = el('button', { type: 'button', class: 'btn sec' }, 'Excluir do app');
+  recusar.onclick = async () => {
+    if (!confirm(`Deseja realmente excluir esta nota do app?\n\n${c.nome}\nNF ${c.nf}${c.fornecedor ? ' · ' + c.fornecedor : ''}\n\nO item some só da lista do app: o estoque não muda, e a nota fiscal continua no DANFE View e no Drive.\n\nUse quando o produto não chegou ou já foi lançado antes.`)) return;
+    if (await enviarAprovacao(c, { decisao: 'ignorar' }, 'Nota excluída do app (o estoque não mudou)')) redesenhar();
+  };
   return el('div', { class: 'cartao' },
     el('strong', {}, c.nome), el('span', { class: 'sub', style: 'display:block' }, diesel ? 'Diesel' : (c.principio ? `Princípio ativo: ${c.principio}` : (exigePA ? 'Princípio ativo: a nota não traz (será pedido ao aprovar)' : 'Sem princípio ativo na nota'))),
     el('span', { class: 'sub', style: 'display:block' }, `NF ${c.nf} · ${fmtData(c.emissao)}${c.concentracao ? ' · ' + c.concentracao : ''}`),
