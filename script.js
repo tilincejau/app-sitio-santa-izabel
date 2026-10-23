@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v30';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v31';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
