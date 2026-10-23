@@ -86,6 +86,9 @@ select + input[type=text] { margin-top: 8px; border-style: dashed; }
 .duplo button { min-height: 52px; border: 1.5px solid var(--campo); border-radius: var(--raio); background: #fff; font: inherit; font-weight: 600; cursor: pointer; }
 .duplo .sel-ok { background: var(--verde); border-color: var(--verde); color: #fff; }
 .duplo .sel-pend { background: var(--ouro); border-color: var(--ouro); color: #fff; }
+/* botão principal dentro de um par (ex.: "Chegou ✔" ao lado de "Ajustar…"): sem isso o fundo branco do par apagava a letra branca */
+.duplo .btn { margin-top: 0; border: 0; background: linear-gradient(135deg, var(--verde), var(--verde-2)); color: #fff; font-size: 16px; font-weight: 700; box-shadow: 0 4px 12px rgba(14,74,38,.25); }
+.duplo .btn.sec { background: var(--lima-claro); color: var(--verde); box-shadow: none; }
 .gr-item input { margin-top: 8px; min-height: 46px; }
 
 .fotos { display: flex; gap: 10px; }
