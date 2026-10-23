@@ -1,5 +1,5 @@
 /* Guarda o app no celular para abrir mesmo sem internet. Ao mudar qualquer arquivo do app, aumente o número da versão. */
-const VERSAO = 'sitio-v27';
+const VERSAO = 'sitio-v28';
 const ARQUIVOS = ['./', 'index.html', 'style.css', 'script.js', 'logo.png', 'icone-192.png', 'icone-512.png', 'manifest.json'];
 
 self.addEventListener('install', e => {
