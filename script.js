@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v28';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v30';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -1108,12 +1108,33 @@ function renderAlertaChegadas() {
 async function enviarAprovacao(c, dados, aviso) {
   const id = uid();
   const payload = { acao: 'salvar', modulo: 'nfe_aprovar', id_transacao: id, dados: { id: c.id, ...dados }, novasListas: [] };
-  if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: `${dados.decisao === 'ignorar' ? 'Nota excluída do app' : 'Chegada'}: ${c.nome}` }))) return false;
+  if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: `${dados.decisao === 'ignorar' ? 'Nota excluída do app' : dados.decisao === 'ja_lancado' ? 'Nota já lançada antes' : 'Chegada'}: ${c.nome}` }))) return false;
   S.dados.chegadas = chegadas().filter(x => x.id !== c.id);
   try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
   toast(aviso); renderAlertaReceitas(); sincronizar();
   return true;
 }
+// Antes de lançar a chegada, pergunta SEMPRE se o produto já foi lançado ou contado no estoque (o diesel, por exemplo, chega no sítio antes da nota).
+// Devolve 'agora' (lançar), 'antes' (já estava lançado: só tirar da lista, sem mexer no estoque) ou null (voltar).
+function perguntarJaLancado(c) {
+  return new Promise(resolve => {
+    const fundo = el('div', { class: 'modal-rec modal-ja-lancado' });
+    const fechar = r => { fundo.remove(); resolve(r); };
+    const diesel = c.tipo === 'DIESEL';
+    fundo.append(el('div', { class: 'cx' },
+      el('h2', {}, 'Antes de lançar'),
+      el('p', { style: 'margin:0 0 6px' }, el('b', {}, c.nome), ` · NF ${c.nf}`),
+      el('p', { style: 'margin:0 0 10px' }, diesel
+        ? 'Este diesel já foi lançado na Chegada de diesel, ou o tanque já foi medido depois que ele chegou?'
+        : 'Este produto já foi lançado ou contado no estoque antes de a nota chegar (por exemplo, uma contagem feita depois que ele chegou ao sítio)?'),
+      c.aviso ? el('div', { class: 'aviso-chegada' }, '⚠ ' + c.aviso) : null,
+      el('button', { type: 'button', class: 'btn', onclick: () => fechar('agora') }, 'Não, ainda não lancei: lançar agora'),
+      el('button', { type: 'button', class: 'btn sec', onclick: () => fechar('antes') }, 'Sim, já lancei antes: só tirar da lista'),
+      el('button', { type: 'button', class: 'link', style: 'display:block;margin:14px auto 0', onclick: () => fechar(null) }, 'Voltar')));
+    document.body.append(fundo);
+  });
+}
+const MSG_JA_LANCADO = 'Ok: tirei da lista. O estoque não mudou (já estava lançado).';
 function cartaoChegada(c, redesenhar) {
   const diesel = c.tipo === 'DIESEL', exigePA = c.tipo === 'DEFENSIVO';   // defensivo sem princípio ativo não serve para achar produto equivalente
   const noCadastro = (S.dados.produtos || []).find(p => p.id === c.sugestaoId);
@@ -1140,18 +1161,23 @@ function cartaoChegada(c, redesenhar) {
     if (!diesel && !sel.value) return toast('Escolha o produto ou marque como produto novo.', 'erro');
     if (!diesel && sel.value === 'NOVO' && !nome.value.trim()) return toast('Escreva o nome do produto novo.', 'erro');
     if (!diesel && exigePA && !paBox.hidden && !pa.value.trim()) { pa.focus(); return toast('Digite o princípio ativo do produto (a nota não traz).', 'erro'); }
+    const resp = await perguntarJaLancado(c); if (!resp) return;
+    if (resp === 'antes') { confirmar.disabled = true; if (await enviarAprovacao(c, { decisao: 'ja_lancado' }, MSG_JA_LANCADO)) redesenhar(); else confirmar.disabled = false; return; }
     confirmar.disabled = true;
-    const ok = await enviarAprovacao(c, { decisao: 'aprovar', produtoId: diesel ? '' : sel.value, nome: nome.value.trim(), principio: pa.value.trim(), classe: classe.value, concentracao: conc.value.trim(), quantidade: String(q), unidade: un.value }, 'Chegada aprovada ✔ Entra no estoque quando enviar');
-    if (ok) redesenhar(); else confirmar.disabled = false;
+    const eNovo = !diesel && sel.value === 'NOVO';
+    const ok = await enviarAprovacao(c, { decisao: 'aprovar', produtoId: diesel ? '' : sel.value, nome: nome.value.trim(), principio: pa.value.trim(), classe: classe.value, concentracao: conc.value.trim(), quantidade: String(q), unidade: un.value }, eNovo ? 'Chegada aprovada ✔ Produto novo: depois preencha a ficha na aba Book' : 'Chegada aprovada ✔ Entra no estoque quando enviar');
+    if (ok) { redesenhar(); if (!diesel && !eNovo) lembrarFicha(sel.value); } else confirmar.disabled = false;
   };
   painel.append(...(diesel ? [] : [el('label', { class: 'rot' }, 'Produto no cadastro'), sel, novo, paBox, el('label', { class: 'rot' }, 'Concentração'), conc]),
     el('label', { class: 'rot' }, diesel ? 'Litros que chegaram' : 'Quanto chegou (total)'), el('div', { class: 'duplo' }, qtd, un), confirmar);
   const rapido = el('button', { type: 'button', class: 'btn' }, 'Chegou ✔');
   rapido.onclick = async () => {
     if (!pronto) { painel.hidden = false; if (exigePA && !paBox.hidden && !pa.value.trim()) pa.focus(); return toast(exigePA && !c.principio ? 'A nota não traz o princípio ativo: digite e confirme.' : 'Confira o produto e a quantidade e confirme.'); }
+    const resp = await perguntarJaLancado(c); if (!resp) return;
+    if (resp === 'antes') { rapido.disabled = true; if (await enviarAprovacao(c, { decisao: 'ja_lancado' }, MSG_JA_LANCADO)) redesenhar(); else rapido.disabled = false; return; }
     rapido.disabled = true;
     const ok = await enviarAprovacao(c, { decisao: 'aprovar', produtoId: diesel ? '' : c.sugestaoId, nome: c.nome, principio: c.principio, concentracao: c.concentracao, quantidade: String(c.totalQtd), unidade: c.totalUn }, 'Chegada aprovada ✔ Entra no estoque quando enviar');
-    if (ok) redesenhar(); else rapido.disabled = false;
+    if (ok) { redesenhar(); if (!diesel) lembrarFicha(c.sugestaoId); } else rapido.disabled = false;
   };
   const recusar = el('button', { type: 'button', class: 'btn sec' }, 'Excluir do app');
   recusar.onclick = async () => {
@@ -1162,6 +1188,7 @@ function cartaoChegada(c, redesenhar) {
     el('strong', {}, c.nome), el('span', { class: 'sub', style: 'display:block' }, diesel ? 'Diesel' : (c.principio ? `Princípio ativo: ${c.principio}` : (exigePA ? 'Princípio ativo: a nota não traz (será pedido ao aprovar)' : 'Sem princípio ativo na nota'))),
     el('span', { class: 'sub', style: 'display:block' }, `NF ${c.nf} · ${fmtData(c.emissao)}${c.concentracao ? ' · ' + c.concentracao : ''}`),
     c.fornecedor ? el('span', { class: 'sub', style: 'display:block' }, `Fornecedor: ${c.fornecedor}`) : null,
+    c.aviso ? el('div', { class: 'aviso-chegada' }, '⚠ ' + c.aviso) : null,
     el('span', { style: 'display:block;margin:6px 0;font-weight:700;color:var(--verde)' }, textoEmbalagem(c)),
     !diesel ? el('span', { class: 'sub', style: 'display:block' }, c.sugestaoId ? `No cadastro: ${c.sugestaoNome}${c.dicionario ? ' (já confirmado antes)' : ' (confira)'}` : 'Produto ainda não cadastrado') : null,
     c.lote ? el('span', { class: 'sub', style: 'display:block' }, `Lote ${c.lote}${c.validade ? ' · validade ' + c.validade : ''}`) : null,
@@ -1203,6 +1230,123 @@ function renderChegou(root, msg) {
   root.append(el('h3', { class: 'secao' }, 'Chegou sem relatório?'), el('p', { class: 'sub' }, 'Tire a foto da nota fiscal.'));
   const cx = el('div'); root.append(cx);
   montarForm(formNota(null), cx, () => { abrirEstoque('posicao'); });
+}
+
+/* =========================================================
+   BOOK DE PRODUTOS: ficha técnica de cada produto (nome, princípio ativo, classificação toxicológica, concentração, cuidados com a calda)
+   ========================================================= */
+let bookApenasSem = false, bookBusca = '', bookAbrir = null, bookNovo = false;
+const bookTmp = [];   // produto criado no Book que o servidor ainda não confirmou (some quando a lista é atualizada)
+const bookNorm = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+const fichaDe = id => (S.dados.fichas || []).find(f => f.id === id) || null;
+const temFicha = p => { const f = fichaDe(p.id); return !!(f && f.cuidados); };
+const produtosBook = () => { const reais = S.dados.produtos || []; return reais.concat(bookTmp.filter(t => !reais.some(o => bookNorm(o.nome) === bookNorm(t.nome)))).sort((a, b) => a.nome.localeCompare(b.nome)); };
+const resumoCalda = t => { const x = String(t).replace(/\s+/g, ' ').trim(); return x.length > 140 ? x.slice(0, 140) + '…' : x; };
+
+// depois de aprovar a chegada de um produto que ainda não tem ficha, oferece preencher agora
+function lembrarFicha(pid) {
+  const p = (S.dados.produtos || []).find(o => o.id === pid);
+  if (p && !temFicha(p) && confirm(`${p.nome} ainda não tem ficha técnica no Book.\n\nPreencher agora?`)) { bookAbrir = p.id; bookBusca = ''; bookApenasSem = false; bookNovo = false; abrirEstoque('book'); }
+}
+
+function painelFicha(p, depois) {
+  const novo = !p, f = p ? fichaDe(p.id) : null;
+  const nome = el('input', { type: 'text', value: p ? p.nome : '', placeholder: 'Nome comercial (ex.: Vertimec 84 SC)', autocomplete: 'off', readonly: p ? true : null });
+  const pa = el('input', { type: 'text', value: p ? p.principio : '', placeholder: 'Princípio ativo (ex.: Abamectina)', autocomplete: 'off' });
+  const classe = el('input', { type: 'text', list: 'dl-classes-book', value: p ? p.classe : '', placeholder: 'Classificação toxicológica (ex.: Cat 3)', autocomplete: 'off' });
+  const conc = el('input', { type: 'text', value: p ? p.concentracao : '', placeholder: 'Concentração (ex.: 84 SC)', autocomplete: 'off' });
+  const calda = el('textarea', { rows: '7', placeholder: 'Ordem de mistura, pH ideal, produtos que não podem ir juntos, agitação, tempo de espera, o que fazer com a sobra…' }, f ? f.cuidados : '');
+  const copia = el('div');
+  // outro produto com o mesmo princípio ativo e ficha pronta: dá para copiar os cuidados e só ajustar
+  const atualizaCopia = () => {
+    copia.replaceChildren();
+    const alvo = bookNorm(pa.value); if (!alvo) return;
+    const outros = produtosBook().filter(o => (!p || o.id !== p.id) && bookNorm(o.principio) === alvo && temFicha(o));
+    if (!outros.length) return;
+    const sel = el('select', {}, outros.map(o => el('option', { value: o.id }, o.nome)));
+    copia.append(el('label', { class: 'rot' }, 'Já existe ficha de outro produto com o mesmo princípio ativo'),
+      el('div', { class: 'duplo' }, sel, el('button', { type: 'button', onclick: () => { calda.value = fichaDe(sel.value).cuidados; toast('Cuidados copiados: ajuste o que for diferente neste produto.'); } }, 'Copiar')));
+  };
+  pa.addEventListener('input', atualizaCopia); atualizaCopia();
+  const salvar = el('button', { type: 'button', class: 'btn' }, 'Salvar ficha');
+  salvar.onclick = async () => {
+    const n = nome.value.trim();
+    if (novo && !n) return toast('Escreva o nome do produto.', 'erro');
+    if (novo) {   // produto que já está no book não é criado de novo: abre a ficha dele
+      const ja = produtosBook().find(o => bookNorm(o.nome) === bookNorm(n));
+      if (ja) { bookAbrir = ja.id; bookNovo = false; toast('Esse produto já está no Book: abri a ficha dele.'); return depois(); }
+    }
+    if (calda.value.trim().length > 3000) return toast('O texto dos cuidados está grande demais (máximo de 3000 letras).', 'erro');
+    salvar.disabled = true;
+    const id = uid(), pid = p && !String(p.id).startsWith('tmp_') ? p.id : 'NOVO';
+    const dados = { produtoId: pid, nome: p ? p.nome : n, principio: pa.value.trim(), classe: classe.value.trim(), concentracao: conc.value.trim(), cuidados: calda.value.trim() };
+    const payload = { acao: 'salvar', modulo: 'ficha_tecnica', id_transacao: id, dados, novasListas: [] };
+    if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: `Ficha técnica: ${dados.nome}` }))) { salvar.disabled = false; return; }
+    let prod = p;   // já aparece na tela; o servidor confirma depois
+    if (!prod) { prod = { id: 'tmp_' + id, tipo: 'Outros', nome: n, principio: '', classe: '', concentracao: '' }; bookTmp.push(prod); }
+    ['principio', 'classe', 'concentracao'].forEach(k => { if (dados[k]) prod[k] = dados[k]; });
+    const lista = S.dados.fichas = S.dados.fichas || [], ex = lista.find(x => x.id === prod.id);
+    if (ex) ex.cuidados = dados.cuidados; else lista.push({ id: prod.id, cuidados: dados.cuidados, por: '', em: hoje(), pdf: '' });
+    try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
+    bookAbrir = null; bookNovo = false; toast('Ficha guardada ✔ O PDF é gerado quando enviar'); sincronizar(); depois();
+  };
+  return el('div', { class: 'painel-prod' },
+    el('datalist', { id: 'dl-classes-book' }, (S.dados.classes || []).map(c => el('option', { value: c }))),
+    el('label', { class: 'rot' }, 'Nome do produto'), nome,
+    el('label', { class: 'rot' }, 'Princípio ativo'), pa,
+    el('label', { class: 'rot' }, 'Classificação toxicológica'), classe,
+    el('label', { class: 'rot' }, 'Concentração'), conc,
+    el('label', { class: 'rot' }, 'Cuidados com a calda'), calda, copia, salvar);
+}
+
+function cartaoBook(p, redesenhar) {
+  const f = fichaDe(p.id), ok = !!(f && f.cuidados), aberto = bookAbrir === p.id;
+  const painel = painelFicha(p, redesenhar); painel.hidden = !aberto;
+  const dados = [p.principio && `Princípio ativo: ${p.principio}`, p.classe && `Classe: ${p.classe}`, p.concentracao && `Conc.: ${p.concentracao}`].filter(Boolean).join(' · ');
+  const card = el('div', { class: 'cartao' },
+    el('div', { class: 'linha-book' }, el('strong', {}, p.nome), el('span', { class: 'chip ' + (ok ? 'chip-ok' : 'chip-falta') }, ok ? 'Ficha pronta' : 'Falta a ficha')),
+    el('span', { class: 'sub', style: 'display:block' }, dados || 'Sem princípio ativo, classe ou concentração'),
+    ok ? el('span', { class: 'sub', style: 'display:block;margin-top:4px' }, 'Calda: ' + resumoCalda(f.cuidados)) : null,
+    el('div', { class: 'duplo', style: 'margin-top:10px' },
+      el('button', { type: 'button', onclick: () => { painel.hidden = !painel.hidden; } }, ok ? 'Editar a ficha' : 'Criar a ficha'),
+      f && f.pdf ? el('a', { href: f.pdf, target: '_blank', rel: 'noopener', class: 'btn-link' }, 'Ver o PDF') : el('span', { class: 'sub', style: 'align-self:center;text-align:center' }, ok ? 'PDF a caminho' : '')),
+    painel);
+  if (aberto) setTimeout(() => card.scrollIntoView({ block: 'center', behavior: 'smooth' }), 80);
+  return card;
+}
+
+function renderBook(root) {
+  root.replaceChildren();
+  const todos = produtosBook(), feitos = todos.filter(temFicha).length;
+  root.append(el('p', { class: 'sub' }, todos.length ? `${feitos} de ${todos.length} produtos com a ficha técnica preenchida.` : 'Ainda não há produtos. Crie o primeiro no botão abaixo.'));
+  const redesenhar = () => renderBook(root);
+  const busca = el('input', { type: 'text', placeholder: 'Buscar por nome ou princípio ativo', value: bookBusca, autocomplete: 'off' });
+  const lista = el('div');
+  const desenhaLista = () => {
+    lista.replaceChildren();
+    const q = bookNorm(bookBusca);
+    const vistos = todos.filter(p => (!bookApenasSem || !temFicha(p)) && (!q || bookNorm(p.nome).includes(q) || bookNorm(p.principio).includes(q)));
+    if (!vistos.length) lista.append(el('p', { class: 'sub' }, bookApenasSem && !q ? 'Todas as fichas estão preenchidas.' : 'Nenhum produto encontrado.'));
+    vistos.forEach(p => lista.append(cartaoBook(p, redesenhar)));
+  };
+  busca.addEventListener('input', () => { bookBusca = busca.value; desenhaLista(); });
+  const filtro = el('button', { type: 'button', class: 'btn sec', style: 'margin-top:10px', onclick: () => { bookApenasSem = !bookApenasSem; redesenhar(); } }, bookApenasSem ? 'Mostrar todos os produtos' : 'Mostrar só os que faltam');
+  const status = el('p', { class: 'sub' });
+  const gerar = el('button', { type: 'button', class: 'btn sec', style: 'margin-top:10px' }, 'Gerar o book completo (PDF para imprimir)');
+  gerar.onclick = async () => {
+    gerar.disabled = true; status.textContent = 'Gerando o PDF…';
+    try {
+      const r = await api({ acao: 'book_gerar' });
+      if (!r.sucesso) throw new Error(r.erro || 'Não foi possível gerar o book');
+      status.replaceChildren(`Book pronto, com ${r.total} ficha(s): `, el('a', { href: r.url, target: '_blank', rel: 'noopener' }, 'abrir o PDF'));
+    } catch (e) { status.textContent = ''; toast(/fetch|Failed|network/i.test(e.message) ? 'Sem internet: tente de novo quando conectar.' : e.message, 'erro'); }
+    gerar.disabled = false;
+  };
+  const novo = el('button', { type: 'button', class: 'btn', style: 'margin-top:14px', onclick: () => { bookNovo = !bookNovo; bookAbrir = null; redesenhar(); } }, bookNovo ? 'Cancelar' : 'Novo produto no Book');
+  root.append(busca, filtro, novo);
+  if (bookNovo) { const p = painelFicha(null, redesenhar); p.style.marginTop = '8px'; root.append(el('div', { class: 'cartao' }, el('strong', {}, 'Novo produto'), p)); }
+  root.append(lista, gerar, status);
+  desenhaLista();
 }
 
 /* =========================================================
@@ -1672,12 +1816,13 @@ function abrirEstoque(aba) {
   if (aba) abaEstoque = aba;
   mostrar('tela-estoque');
   const abas = $('#estoque-abas'); abas.replaceChildren();
-  [['posicao', 'Posição'], ['resumo', 'Resumo'], ['entrada', 'Chegou produto'], ['diesel', 'Diesel'], ['caixas', 'Caixas']].forEach(([id, nome]) =>
+  [['posicao', 'Posição'], ['resumo', 'Resumo'], ['entrada', 'Chegou produto'], ['diesel', 'Diesel'], ['caixas', 'Caixas'], ['book', 'Book']].forEach(([id, nome]) =>
     abas.append(el('button', { class: id === abaEstoque ? 'on' : '', onclick: () => { produtoEntrada = null; dieselMedindo = false; abrirEstoque(id); } }, nome)));
   const root = $('#estoque-root');
   if (abaEstoque === 'entrada') { if (produtoEntrada) montarForm(formNota(produtoEntrada), root, () => { produtoEntrada = null; abrirEstoque('posicao'); }); else renderChegou(root); }
   else if (abaEstoque === 'diesel') { if (dieselMedindo) montarForm(FORM_MEDICAO_DIESEL, root, () => { dieselMedindo = false; abrirEstoque('diesel'); }); else renderDiesel(root); }
   else if (abaEstoque === 'caixas') renderCaixas(root);
+  else if (abaEstoque === 'book') renderBook(root);
   else if (abaEstoque === 'resumo') renderResumo(root);
   else renderPosicao(root);
 }
