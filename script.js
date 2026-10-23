@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v26';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v27';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -1158,6 +1158,7 @@ function cartaoChegada(c, redesenhar) {
   return el('div', { class: 'cartao' },
     el('strong', {}, c.nome), el('span', { class: 'sub', style: 'display:block' }, diesel ? 'Diesel' : (c.principio ? `Princípio ativo: ${c.principio}` : (exigePA ? 'Princípio ativo: a nota não traz (será pedido ao aprovar)' : 'Sem princípio ativo na nota'))),
     el('span', { class: 'sub', style: 'display:block' }, `NF ${c.nf} · ${fmtData(c.emissao)}${c.concentracao ? ' · ' + c.concentracao : ''}`),
+    c.fornecedor ? el('span', { class: 'sub', style: 'display:block' }, `Fornecedor: ${c.fornecedor}`) : null,
     el('span', { style: 'display:block;margin:6px 0;font-weight:700;color:var(--verde)' }, textoEmbalagem(c)),
     !diesel ? el('span', { class: 'sub', style: 'display:block' }, c.sugestaoId ? `No cadastro: ${c.sugestaoNome}${c.dicionario ? ' (já confirmado antes)' : ' (confira)'}` : 'Produto ainda não cadastrado') : null,
     c.lote ? el('span', { class: 'sub', style: 'display:block' }, `Lote ${c.lote}${c.validade ? ' · validade ' + c.validade : ''}`) : null,
@@ -1166,18 +1167,23 @@ function cartaoChegada(c, redesenhar) {
 }
 // lê o arquivo do DANFE View (acentos em Latin-1; se vier em UTF-8, lê de novo assim)
 function lerArquivoTexto(f, cod) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsText(f, cod); }); }
-async function importarRelatorioNfe(f, status, redesenhar) {
+async function importarRelatorioNfe(arquivos, status, redesenhar) {
   try {
-    let texto = await lerArquivoTexto(f, 'ISO-8859-1');
-    if (/Ã[§£©ª³µ]/.test(texto)) texto = await lerArquivoTexto(f, 'UTF-8');
-    status.textContent = 'Lendo o relatório…';
-    const r = await api({ acao: 'nfe_importar', csv: texto, nome: f.name });
+    status.textContent = 'Lendo os arquivos…';
+    const lista = [];
+    for (const f of arquivos) {
+      const xml = /\.xml$/i.test(f.name);
+      let texto = await lerArquivoTexto(f, xml ? 'UTF-8' : 'ISO-8859-1');
+      if (!xml && /Ã[§£©ª³µ]/.test(texto)) texto = await lerArquivoTexto(f, 'UTF-8');   // o CSV do DANFE View vem em Latin-1; se vier em UTF-8, lê assim
+      lista.push({ nome: f.name, texto });
+    }
+    const r = await api({ acao: 'nfe_importar', arquivos: lista });
     if (!r.sucesso) throw new Error(r.erro || 'Não foi possível importar');
     S.dados.chegadas = await ajustarChegadasComFila(r.chegadas || []);
     try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
     const x = r.resumo;
-    const msg = `Importado: ${x.novos} produto(s) novo(s) para aprovar · ${x.repetidos} já importado(s) · ${x.foraDoEstoque} item(ns) fora do estoque agrícola${x.cancelados ? ' · ' + x.cancelados + ' cancelado(s)' : ''}.`;
-    toast(x.novos ? `${x.novos} produto(s) para aprovar ✔` : 'Nenhum produto novo neste relatório'); renderAlertaReceitas(); redesenhar(msg);
+    const msg = `${arquivos.length} arquivo(s) lido(s): ${x.novos || 0} produto(s) novo(s) para aprovar · ${x.repetidos || 0} já importado(s) · ${x.foraDoEstoque || 0} item(ns) fora do estoque agrícola${x.outrosDocumentos ? ' · ' + x.outrosDocumentos + ' documento(s) que não são compra do sítio' : ''}${x.cancelados ? ' · ' + x.cancelados + ' cancelado(s)' : ''}${x.antigos ? ' · ' + x.antigos + ' compra(s) antiga(s) ignorada(s)' : ''}.`;
+    toast(x.novos ? `${x.novos} produto(s) para aprovar ✔` : 'Nenhum produto novo nestes arquivos'); renderAlertaReceitas(); redesenhar(msg);
   } catch (e) { status.textContent = ''; toast(/fetch|Failed|network/i.test(e.message) ? 'Sem internet: importe de novo quando conectar.' : e.message, 'erro'); }
 }
 function renderChegou(root, msg) {
@@ -1187,10 +1193,10 @@ function renderChegou(root, msg) {
   if (lista.length) lista.forEach(c => root.append(cartaoChegada(c, () => { renderChegou(root); renderAlertaReceitas(); })));
   else root.append(el('p', { class: 'sub' }, 'Nenhum produto esperando aprovação. Quando um relatório do DANFE View for importado, os produtos que chegaram aparecem aqui.'));
   const status = el('p', { class: 'sub' }, msg || '');
-  const arq = el('input', { type: 'file', accept: '.csv,text/csv', hidden: true, onchange: ev => { const f = ev.target.files[0]; if (f) importarRelatorioNfe(f, status, m => renderChegou(root, m)); ev.target.value = ''; } });
-  root.append(el('h3', { class: 'secao' }, 'Importar o relatório do DANFE View'),
-    el('p', { class: 'sub' }, 'No DANFE View, exporte o relatório de documentos em CSV e escolha o arquivo aqui. Só entram defensivos, adubos, feromônios e diesel; o resto é ignorado.'),
-    el('label', { class: 'btn sec', style: 'display:block;text-align:center;cursor:pointer' }, 'Escolher o arquivo do relatório (.csv)', arq), status);
+  const arq = el('input', { type: 'file', accept: '.xml,.csv,text/xml,application/xml,text/csv', multiple: true, hidden: true, onchange: ev => { const fs = [...ev.target.files]; if (fs.length) importarRelatorioNfe(fs, status, m => renderChegou(root, m)); ev.target.value = ''; } });
+  root.append(el('h3', { class: 'secao' }, 'Importar as notas do DANFE View'),
+    el('p', { class: 'sub' }, 'Escolha os arquivos XML das notas (pode marcar vários) ou o relatório em CSV. Só entram defensivos, adubos, feromônios e diesel; o resto é ignorado. Se a pasta do Drive já está ligada, isso é automático e você só aprova aqui.'),
+    el('label', { class: 'btn sec', style: 'display:block;text-align:center;cursor:pointer' }, 'Escolher arquivos (.xml ou .csv)', arq), status);
   root.append(el('h3', { class: 'secao' }, 'Chegou sem relatório?'), el('p', { class: 'sub' }, 'Tire a foto da nota fiscal.'));
   const cx = el('div'); root.append(cx);
   montarForm(formNota(null), cx, () => { abrirEstoque('posicao'); });
