@@ -204,3 +204,11 @@ select + input[type=text] { margin-top: 8px; border-style: dashed; }
 .menu-num { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--verde); color: #fff; font-size: 13px; }
 .menu-secao .menu { padding-bottom: 4px; }
 .menu-secoes .versao { padding: 18px 16px 28px; }
+
+/* book de produtos e aviso de lançamento repetido */
+.linha-book { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.chip { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.chip-ok { background: var(--lima-claro); color: var(--verde); }
+.chip-falta { background: var(--ouro-claro); color: #7a5a12; }
+.btn-link { display: flex; align-items: center; justify-content: center; min-height: 52px; border: 1.5px solid var(--campo); border-radius: var(--raio); background: #fff; color: var(--verde); font-weight: 700; text-decoration: none; }
+.aviso-chegada { margin: 8px 0; padding: 9px 11px; border: 1px solid #e0a040; border-radius: 10px; background: #fff3e0; color: #7a4a00; font-size: 14px; font-weight: 600; }
