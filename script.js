@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v32';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v33';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -1810,6 +1810,21 @@ function equivalentes(p) {
   });
   return lista;
 }
+// Opções do "Produto usado": o da receita, os equivalentes (mesmo princípio ativo e concentração), os outros produtos que têm saldo no estoque
+// e "Outro produto (digitar um novo)". Escolhendo um que não é o da receita nem equivalente, o aplicador informa a dose que realmente usou.
+const ehEquivalente = (p, c) => { const pa = normTxt(p.principio), conc = normTxt(p.concentracao); return !!pa && !!conc && normTxt(c.principio) === pa && normTxt(c.concentracao) === conc; };
+function opcoesProdutoUsado(p) {
+  const saldo = {}; (S.dados.estoque || []).forEach(e => { saldo[e.id] = e; });
+  const eq = [], outros = [];
+  (S.dados.produtos || []).forEach(c => {
+    if (c.id === p.id) return;
+    const e = saldo[c.id], est = e ? ` · estoque ${fmt(e.saldo)} ${e.un}` : '';
+    if (ehEquivalente(p, c)) eq.push({ v: c.id, l: `${c.nome} (equivalente${est})` });
+    else if (e && e.saldo > 0) outros.push({ v: c.id, l: `${c.nome} (outro produto${est})` });
+  });
+  outros.sort((a, b) => a.l.localeCompare(b.l));
+  return [{ v: p.id, l: `${p.nome} (o da receita)` }, ...eq, ...outros, { v: 'NOVO', l: '➕ Outro produto (digitar um novo)' }];
+}
 const totalTxt = (v, un) => { un = String(un).toUpperCase(); if (un === 'ML' && v >= 1000) return `${fmt(v / 1000, 3)} L`; if (un === 'G' && v >= 1000) return `${fmt(v / 1000, 3)} KG`; return `${fmt(v, 3)} ${un}`; };
 const doseTxt = p => p.porTalhao ? `${Object.keys(p.porTalhao).sort().map(t => `${t.replace('TALHÃO ', 'T')}: ${fmt(p.porTalhao[t].dose, 3)} ${p.unidade}`).join(' · ')} (dose por planta: ${fmt(p.dosePlanta, 3)} ${p.unidade})` : p.pes ? `${fmt(p.dose, 3)} ${p.unidade} por talhão (${fmt(p.pes)} pés × ${fmt(p.dosePlanta, 3)})` : `${fmt(p.dose, 3)} ${p.unidade}`;
 function resumoReceita(r) {
@@ -1836,11 +1851,28 @@ function moduloAplicar(r) {
     { t: 'secao', l: r.id },
     { t: 'info', show: () => resumoReceita(r) }
   ];
+  // produto realmente usado (o da receita, um equivalente, qualquer outro do estoque ou um novo digitado)
+  const produtoDe = id => (S.dados.produtos || []).find(x => x.id === id);
+  const diferenteDe = (p, i, V) => { const sel = V['prod' + i]; if (!sel || sel === p.id) return false; if (sel === 'NOVO') return true; const c = produtoDe(sel); return !(c && ehEquivalente(p, c)); };
+  const nomeUsado = (p, i, V) => { const sel = V['prod' + i]; return !sel || sel === p.id ? p.nome : sel === 'NOVO' ? (String(V['nome' + i] || '').trim() || 'o produto novo') : ((produtoDe(sel) || {}).nome || p.nome); };
+  const doseUsada = (p, i, V) => diferenteDe(p, i, V) ? { dose: numero(V['dose' + i]) || 0, unidade: V['unid' + i] || p.unidade } : { dose: p.dose, unidade: p.unidade };
   if (!manejo) {
     campos.push({ t: 'secao', l: '1. Confirme os produtos' });
-    r.produtos.forEach((p, i) => campos.push(
-      { t: 'info', show: () => `Produto ${i + 1} da receita: ${p.nome}\nPrincípio ativo: ${p.principio || '-'} · Concentração: ${p.concentracao}\nDose: ${doseTxt(p)}${p.pes || p.porTalhao ? '' : ' por bomba'}` },
-      { k: 'prod' + i, t: 'select', l: `Produto usado (${i + 1})`, def: p.id, opts: () => equivalentes(p) }));
+    const adubo = r.aplicacao === 'ADUBAÇÃO';
+    r.produtos.forEach((p, i) => {
+      const novoP = V => V['prod' + i] === 'NOVO', diferente = V => diferenteDe(p, i, V);
+      campos.push(
+        { t: 'info', show: () => `Produto ${i + 1} da receita: ${p.nome}\nPrincípio ativo: ${p.principio || '-'} · Concentração: ${p.concentracao}\nDose: ${doseTxt(p)}${p.pes || p.porTalhao ? '' : ' por bomba'}` },
+        { k: 'prod' + i, t: 'select', l: `Produto usado (${i + 1})`, def: p.id, opts: () => opcoesProdutoUsado(p) },
+        { k: 'nome' + i, t: 'text', l: 'Nome do produto usado', showIf: novoP },
+        { k: 'principio' + i, t: 'text', l: 'Princípio ativo', showIf: novoP },
+        { k: 'classe' + i, t: 'select', l: 'Classe toxicológica', outro: true, opts: () => S.dados.classes, showIf: novoP },
+        { k: 'concentracao' + i, t: 'text', l: 'Concentração (ex.: 18 EC, 250 g/L)', showIf: novoP },
+        { t: 'info', showIf: diferente, show: V => `⚠ ${nomeUsado(p, i, V)} não é o produto da receita (${p.nome}) nem tem o mesmo princípio ativo e a mesma concentração. A dose da receita não vale para ele: informe a dose que você realmente usou. A troca aparece na ficha.` },
+        adubo ? { k: 'dosePlanta' + i, t: 'number', l: 'Dose usada por planta', positivo: true, showIf: diferente }
+              : { k: 'dose' + i, t: 'number', l: 'Dosagem usada (por bomba)', positivo: true, showIf: diferente },
+        { k: 'unid' + i, t: 'select', l: 'Unidade da dose', def: p.unidade, opts: UNID, showIf: diferente });
+    });
   }
   campos.push({ t: 'secao', l: manejo ? 'Onde foi feito' : '2. Onde foi aplicado' },
     { k: 'itens', t: 'multi', l: 'Talhões (marque os que você aplicou)', opts: talhoes, subTitle: v => v, sub: [
@@ -1849,7 +1881,7 @@ function moduloAplicar(r) {
                     : [{ k: 'inicio', t: 'datetime', l: 'Início', now: true }, { k: 'fim', t: 'datetime', l: 'Fim', now: true },
                        ...(bombas ? [
                          { k: 'bombas', t: 'number', l: 'Bombas aplicadas', positivo: true },
-                         { t: 'info', show: (V, st) => { const b = numero(st.bombas); return b > 0 ? 'Baixa no estoque:\n' + r.produtos.map(p => `${p.nome}: ${fmt(p.dose, 3)} ${p.unidade} × ${fmt(b, 3)} bombas = ${totalTxt(p.dose * b, p.unidade)}`).join('\n') : ''; } }
+                         { t: 'info', show: (V, st) => { const b = numero(st.bombas); return b > 0 ? 'Baixa no estoque:\n' + r.produtos.map((p, i) => { const u = doseUsada(p, i, V), n = nomeUsado(p, i, V); return u.dose > 0 ? `${n}: ${fmt(u.dose, 3)} ${u.unidade} × ${fmt(b, 3)} bombas = ${totalTxt(u.dose * b, u.unidade)}` : `${n}: informe a dose usada`; }).join('\n') : ''; } }
                        ] : [])] }
     ] });
   if (!manejo) campos.push(
