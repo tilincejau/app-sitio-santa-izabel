@@ -5,7 +5,7 @@
    monta o formulário, valida, guarda no aparelho e envia quando há sinal.
    ========================================================= */
 
-const APP_VERSAO = 'v31';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
+const APP_VERSAO = 'v32';   // aparece no rodapé do menu; confira se o celular já está com a versão nova
 const API_URL = 'https://script.google.com/macros/s/AKfycbyw4HO_475NOJORwUuEhiIBXO7shuDChGk_uJQwL5vNMvywh2l0CYu2Odu-kIxb79rg/exec';
 
 const RESP = ['OCIMAR DONIZETE ZANIBONI', 'VALDECIR APARECIDO LUCAS LEITE'];
@@ -684,6 +684,8 @@ function ajustarCaixasLocal(tipo, destino, qtd) {
 /* =========================================================
    MOTOR DE FORMULÁRIOS
    ========================================================= */
+// valores iniciais de um formulário (edição): ficam em st.__ini, que não entra no que é enviado
+const iniDe = (st, k) => (st && st.__ini) ? st.__ini[k] : undefined;
 function opcoes(f, st) {
   let o = typeof f.opts === 'function' ? f.opts(st) : f.opts;
   if (typeof o === 'string') o = [...new Set([...(LISTAS_BASE[o] || []), ...((S.dados.listas || {})[o] || [])])];
@@ -706,8 +708,10 @@ function renderCampo(f, st, ctx) {
     case 'text': case 'number': case 'date': case 'datetime': case 'time': case 'textarea': {
       const tipo = { text: 'text', number: 'number', date: 'date', datetime: 'datetime-local', time: 'time' }[f.t];
       const inp = f.t === 'textarea' ? el('textarea', { rows: 4 }) : el('input', { type: tipo, autocomplete: 'off', inputmode: f.t === 'number' ? (f.inteiro ? 'numeric' : 'decimal') : (f.decimal ? 'decimal' : null), step: f.t === 'number' ? (f.inteiro ? '1' : 'any') : null, min: f.inteiro ? '0' : null });
-      const v0 = f.def !== undefined ? f.def : f.now ? (f.t === 'date' ? hoje() : f.t === 'time' ? hhmm() : agora()) : '';
+      const i0 = iniDe(st, f.k);
+      const v0 = i0 !== undefined && i0 !== null ? String(i0) : f.def !== undefined ? f.def : f.now ? (f.t === 'date' ? hoje() : f.t === 'time' ? hhmm() : agora()) : '';
       inp.value = v0; st[f.k] = v0; if (f.ro) inp.readOnly = true;
+      if (i0 !== undefined && f.pre) inp.dataset.pre = String(f.preChave ? f.preChave(ctx.V, st) : '');   // o preenchimento automático não pode apagar o valor que já veio
       ctx.inputs[f.k] = inp;
       if (f.upper) { inp.classList.add('caixa-alta'); ctx.finalizers.push(() => { st[f.k] = String(st[f.k] ?? '').trim().toUpperCase(); }); }
       inp.addEventListener('input', () => { st[f.k] = inp.value; });
@@ -752,12 +756,25 @@ function renderCampo(f, st, ctx) {
       popular(opcoes(f, st));
       if (f.def !== undefined) { sel.value = f.def; if (sel.selectedIndex < 0) sel.value = ''; }   // padrão que não está na lista: deixa em branco
       st[f.k] = sel.value;
+      const ini0 = iniDe(st, f.k);
+      if (ini0 !== undefined && ini0 !== null && String(ini0) !== '') {   // edição: começa com o valor que já estava gravado
+        const v = String(ini0);
+        if (f.opcoesDe) { st[f.k] = v; sel.dataset.ini = '1'; }   // a lista só existe depois do primeiro refresh: o bloco abaixo aplica
+        else {
+          if ([...sel.options].some(o => o.value === v)) sel.value = v;
+          else if (f.outro) { sel.value = '__outro'; txt.value = v; }   // texto que foi digitado em "Outro"
+          sync();
+          if (f.padraoDe) sel.dataset.chavePad = String(f.chaveDe ? f.chaveDe(ctx.V, st) : '');   // o padrão do tipo de aplicação não pode passar por cima
+        }
+      }
       if (f.opcoesDe) ctx.dyns.push(() => {   // lista que muda conforme outro campo (ex.: método de aplicação depende do tipo de aplicação)
         const lista = (f.opcoesDe(ctx.V, st) || []).map(x => typeof x === 'object' ? x : { v: x, l: x });
         const chave = JSON.stringify(lista); if (sel.dataset.lista === chave) return;
         sel.dataset.lista = chave;
         const atual = st[f.k]; popular(lista);
         const padrao = f.padraoDe ? f.padraoDe(ctx.V, st) : undefined;
+        const veioDaEdicao = sel.dataset.ini === '1'; delete sel.dataset.ini;
+        if (veioDaEdicao && atual && f.outro && !lista.some(o => o.v === atual)) { sel.value = '__outro'; txt.value = atual; sync(); return; }   // valor digitado em "Outro" antes
         sel.value = lista.some(o => o.v === atual) ? atual : (padrao !== undefined ? padrao : '');
         if (sel.selectedIndex < 0) sel.value = '';
         sync();
@@ -781,8 +798,10 @@ function renderCampo(f, st, ctx) {
       const sel = {}; st[f.k] = sel;
       const chips = el('div', { class: 'chips' }), blocos = el('div');
       const temSub = (f.sub || []).length > 0;
+      const iniMulti = iniDe(st, f.k) || {};
       opcoes(f, st).forEach(o => {
-        const sub = { __opt: o.v };
+        const sub = { __opt: o.v }, iniSub = iniMulti[o.v], marcado = iniSub !== undefined && iniSub !== null && iniSub !== false;
+        if (marcado) Object.defineProperty(sub, '__ini', { value: typeof iniSub === 'object' ? iniSub : {}, enumerable: false });
         const bloco = el('div', { class: 'bloco', hidden: true }, temSub ? el('h4', {}, f.subTitle ? f.subTitle(o.v) : o.l) : null);
         (f.sub || []).forEach(sf => bloco.append(renderCampo(sf, sub, ctx)));
         const chip = el('button', { type: 'button', class: 'chip', 'aria-pressed': 'false', onclick: () => {
@@ -791,6 +810,7 @@ function renderCampo(f, st, ctx) {
           if (on) sel[o.v] = sub; else delete sel[o.v];
           ctx.refresh();
         } }, o.l);
+        if (marcado) { chip.classList.add('on'); chip.setAttribute('aria-pressed', 'true'); bloco.hidden = !temSub; sel[o.v] = sub; }
         chips.append(chip); blocos.append(bloco);
       });
       checa(() => Object.keys(sel).length ? null : `Escolha ao menos uma opção em: ${f.l}`);
@@ -889,9 +909,9 @@ function renderProdutos(f, st, ctx, w, rotulo, checa) {
     { t: 'info', show: (V, s) => adub(V) && numero(s.dosePlanta) > 0 ? 'Dose de cada talhão (pés × dose por planta):\n' + Object.keys(V.talhoes || {}).sort().map(t => `${t}: ${fmt(pesDe(t))} pés → ${fmt(pesDe(t) * numero(s.dosePlanta), 3)} ${s.unidade || ''}`).join('\n') : '' }
   ];
   const numerar = () => { cont.querySelectorAll('.prod-topo strong').forEach((s, i) => { s.textContent = `Produto ${i + 1}`; }); btnAdd.hidden = lista.length >= 10; };
-  function novo() {
+  function novo(ini) {
     if (lista.length >= 10) return;
-    const item = {}; lista.push(item);
+    const item = {}; if (ini) Object.defineProperty(item, '__ini', { value: ini, enumerable: false }); lista.push(item);
     const card = el('div', { class: 'prod' });
     const remover = el('button', { type: 'button', class: 'btn perigo mini', onclick: () => { lista.splice(lista.indexOf(item), 1); card.remove(); numerar(); ctx.refresh(); } }, 'Remover');
     card.append(el('div', { class: 'prod-topo' }, el('strong'), remover));
@@ -900,7 +920,8 @@ function renderProdutos(f, st, ctx, w, rotulo, checa) {
   }
   checa(() => lista.length ? null : 'Adicione ao menos um produto');
   w.append(rotulo, cont, btnAdd);
-  novo();
+  const iniLista = iniDe(st, f.k);
+  if (Array.isArray(iniLista) && iniLista.length) iniLista.forEach(p => novo(p)); else novo();   // edição: um cartão para cada produto que já estava na receita
 }
 
 function comprimir(file, max = 1400, q = .7) {
@@ -918,12 +939,13 @@ function comprimir(file, max = 1400, q = .7) {
 // Monta o formulário de um módulo dentro de "container". onSalvo() é chamado depois de guardar.
 function montarForm(m, container, onSalvo) {
   const ctx = { V: {}, inputs: {}, checks: [], shows: [], dyns: [], infos: [], finalizers: [], persist: [] };
+  if (m.inicial) Object.defineProperty(ctx.V, '__ini', { value: m.inicial, enumerable: false });
   ctx.refresh = () => { ctx.dyns.forEach(f => f()); ctx.shows.forEach(f => f()); ctx.infos.forEach(f => f()); };
   container.replaceChildren(); S.emFormulario = true;
   m.campos.forEach(f => container.append(renderCampo(f, ctx.V, ctx)));
   container.addEventListener('input', ctx.refresh); container.addEventListener('change', ctx.refresh);
 
-  const btn = el('button', { type: 'button', class: 'btn' }, 'Salvar lançamento');
+  const btn = el('button', { type: 'button', class: 'btn' }, m.rotuloSalvar || 'Salvar lançamento');
   btn.onclick = async () => {
     container.querySelectorAll('.campo.erro').forEach(c => c.classList.remove('erro'));
     ctx.finalizers.forEach(f => f());
@@ -936,7 +958,7 @@ function montarForm(m, container, onSalvo) {
     if (await jaTemIgual(fp) && !confirm('Já existe um lançamento igual a este, salvo há pouco. Salvar mesmo assim?')) return;
     btn.disabled = true;
     const id = uid();
-    const payload = { acao: 'salvar', modulo: m.id, id_transacao: id, dados: JSON.parse(JSON.stringify(ctx.V)), novasListas: ctx.persist.map(f => f()).filter(Boolean) };
+    const payload = { acao: 'salvar', modulo: m.id, id_transacao: id, dados: Object.assign(JSON.parse(JSON.stringify(ctx.V)), m.extraDados || {}), novasListas: ctx.persist.map(f => f()).filter(Boolean) };
     if (!(await guardar({ id_transacao: id, payload, criado: Date.now(), titulo: m.nome, fp }))) { btn.disabled = false; return; }
     (payload.novasListas).forEach(n => { const l = S.dados.listas[n.lista] = S.dados.listas[n.lista] || []; if (!l.includes(n.valor)) l.push(n.valor); });
     if (m.aoSalvar) { try { m.aoSalvar(ctx.V, id); } catch (e) {} }
@@ -1535,9 +1557,11 @@ const classeAlertaModulo = m => ((m.id === 'estoque' && (dieselEmAlerta() || che
    ========================================================= */
 const recebeAviso = () => S.perfil !== 'tecnico';   // o técnico lança as receitas: não precisa do aviso de "nova receita"
 const receitasOrdenadas = () => [...(S.dados.receitas || [])].sort((a, b) => ORDEM_PRIO.indexOf(a.prioridade) - ORDEM_PRIO.indexOf(b.prioridade) || String(a.prazo).localeCompare(String(b.prazo)));
+// o aviso de "nova receita" também vale quando o técnico EDITA uma receita: a chave muda a cada edição (a receita sem edição mantém a chave antiga: o id)
+const chaveVista = r => r.versao ? `${r.id}#${r.versao}` : r.id;
 const receitasVistas = () => { try { return JSON.parse(localStorage.getItem('sitio_receitas_vistas')) || []; } catch (e) { return []; } };
 const atrasada = r => String(r.prazo) < hoje();
-function marcarReceitasVistas() { try { localStorage.setItem('sitio_receitas_vistas', JSON.stringify((S.dados.receitas || []).map(r => r.id))); } catch (e) {} renderAlertaReceitas(); }
+function marcarReceitasVistas() { try { localStorage.setItem('sitio_receitas_vistas', JSON.stringify((S.dados.receitas || []).map(chaveVista))); } catch (e) {} renderAlertaReceitas(); }
 
 // faixa no topo do menu: avisa que há receita e mostra a prioridade
 function renderAlertaReceitas() {
@@ -1545,7 +1569,7 @@ function renderAlertaReceitas() {
   renderAlertaDiesel();
   renderAlertaHidrometro();
   renderAlertaLavagem();
-  const lista = receitasOrdenadas(), vistas = receitasVistas(), novas = lista.filter(r => !vistas.includes(r.id)), topo = lista[0];
+  const lista = receitasOrdenadas(), vistas = receitasVistas(), novas = lista.filter(r => !vistas.includes(chaveVista(r))), topo = lista[0];
   document.title = lista.length && recebeAviso() ? `(${lista.length}) Sítio Santa Izabel` : 'Sítio Santa Izabel';   // o número aparece até na aba do navegador
   if (!recebeAviso()) { const b = $('#alerta-receitas'), sn = $('#sino-receitas'); if (b) b.hidden = true; if (sn) sn.hidden = true; return; }
 
@@ -1556,7 +1580,7 @@ function renderAlertaReceitas() {
       box.hidden = false; box.className = 'alerta-rec prio-' + Math.max(0, ORDEM_PRIO.indexOf(topo.prioridade));
       box.replaceChildren(
         el('span', { class: 'alerta-txt' },
-          el('b', {}, novas.length ? (novas.length === 1 ? 'Nova receita para aplicar' : `${novas.length} novas receitas para aplicar`) : `${lista.length} ${lista.length === 1 ? 'receita' : 'receitas'} para aplicar`),
+          el('b', {}, novas.length ? (novas.every(r => r.versao) ? (novas.length === 1 ? 'Receita editada pelo técnico' : `${novas.length} receitas editadas pelo técnico`) : novas.length === 1 ? 'Nova receita para aplicar' : `${novas.length} novas receitas para aplicar`) : `${lista.length} ${lista.length === 1 ? 'receita' : 'receitas'} para aplicar`),
           el('small', {}, `${topo.aplicacao} · prazo ${fmtData(topo.prazo)}${atrasada(topo) ? ' (atrasada)' : ''}`)),
         el('span', { class: 'prio' }, rotuloPrio(topo.prioridade)));
     }
@@ -1589,10 +1613,10 @@ const receitasAvisadas = () => { try { return JSON.parse(localStorage.getItem('s
 function verificarAvisoReceitas() {
   const modal = $('#aviso-receita');
   if (!modal || !modal.hidden || !S.codigo || S.tela === 'tela-acesso' || !recebeAviso()) return;
-  const avisadas = receitasAvisadas(), novas = receitasOrdenadas().filter(r => !avisadas.includes(r.id));
+  const avisadas = receitasAvisadas(), novas = receitasOrdenadas().filter(r => !avisadas.includes(chaveVista(r)));
   if (!novas.length) return;
   const r = novas[0];
-  try { localStorage.setItem('sitio_receitas_avisadas', JSON.stringify([...avisadas, ...novas.map(x => x.id)].slice(-200))); } catch (e) {}
+  try { localStorage.setItem('sitio_receitas_avisadas', JSON.stringify([...avisadas, ...novas.map(chaveVista)].slice(-200))); } catch (e) {}
   const talh = [...new Set(r.pendentes.map(p => p.talhao.replace('TALHÃO ', '')))].join(', ');
   const fechar = () => { modal.hidden = true; modal.replaceChildren(); };
   const abrir = () => {
@@ -1602,9 +1626,10 @@ function verificarAvisoReceitas() {
   modal.className = 'modal-rec prio-' + Math.max(0, ORDEM_PRIO.indexOf(r.prioridade));
   modal.replaceChildren(el('div', { class: 'cx' },
     el('span', { class: 'prio grande-prio' }, rotuloPrio(r.prioridade)),
-    el('h2', {}, novas.length > 1 ? `${novas.length} novas receitas para aplicar` : 'Nova receita para aplicar'),
+    el('h2', {}, r.versao ? 'Receita editada pelo técnico' : novas.length > 1 ? `${novas.length} novas receitas para aplicar` : 'Nova receita para aplicar'),
     el('p', { class: 'cx-linha' }, el('b', {}, `${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}`)),
     el('p', { class: 'cx-linha' }, `Talhão ${talh} · prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''}`),
+    r.versao && r.editada ? el('p', { class: 'cx-sub' }, 'O que mudou: ' + r.editada.mudancas.slice(0, 4).join(' · ') + (r.editada.mudancas.length > 4 ? ' …' : '')) : null,
     r.justificativa ? el('p', { class: 'cx-sub' }, r.justificativa) : null,
     novas.length > 1 ? el('p', { class: 'cx-sub' }, `Esta é a mais urgente. Há mais ${novas.length - 1} aguardando.`) : null,
     el('button', { type: 'button', class: 'btn', onclick: abrir }, 'Abrir receita'),
@@ -1627,6 +1652,7 @@ async function descontarFilaReceitas(lista) {
     if (!i.payload) return;
     if (i.payload.modulo === 'aplicacao_execucao') descontarPares(lista, i.payload.dados);
     else if (i.payload.modulo === 'receita_cancelar') aplicarCancelamentoLocal(lista, i.payload.dados);
+    else if (i.payload.modulo === 'receita_editar' && i.status !== 'erro') { const rec = lista.find(x => x.id === i.payload.dados.idReceita); if (rec) rec.edicaoPendente = true; }
   });
 }
 
@@ -1649,6 +1675,10 @@ async function atualizarReceitas() {
     }
     const antes = receitasAnteriores; receitasAnteriores = lista.map(x => x.id);
     S.dados.receitas = lista;
+    if (S.tela === 'aplicar-receita' && S.receitaAberta && !S.receitaAberta.avisou) {   // o técnico editou a receita que este aplicador está preenchendo
+      const atual = lista.find(x => x.id === S.receitaAberta.id);
+      if (atual && (atual.versao || 0) !== S.receitaAberta.versao) { S.receitaAberta.avisou = true; toast('O técnico editou esta receita. Volte às receitas e abra de novo para ver o que mudou.', 'erro'); }
+    }
     try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {}
     if (!$('#tela-menu').hidden) montarMenu(); else renderAlertaReceitas();
     if (document.visibilityState === 'visible') { verificarAvisoReceitas(); verificarAvisoHidrometro(); }
@@ -1668,7 +1698,7 @@ function abrirReceitasAbertas() {
   const root = $('#form-root'); root.replaceChildren();
   const lista = receitasOrdenadas();
   if (!lista.length) { root.append(el('p', { class: 'sub' }, 'Nenhuma receita em aberto. Todas foram aplicadas ou canceladas.')); return; }
-  root.append(el('p', { class: 'sub' }, 'Receitas que ainda têm talhão para aplicar. Você pode cancelar a receita inteira ou só um talhão: o aplicador deixa de ver o que foi cancelado.'));
+  root.append(el('p', { class: 'sub' }, 'Receitas que ainda têm talhão para aplicar. Você pode editar a receita (produtos, doses, talhões, método, prioridade...) ou cancelá-la, inteira ou só um talhão. O aplicador é avisado de tudo.'));
   lista.forEach(r => root.append(cartaoCancelavel(r)));
 }
 function cartaoCancelavel(r) {
@@ -1697,13 +1727,49 @@ function cartaoCancelavel(r) {
     el('strong', {}, `${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}`),
     el('span', { class: 'sub' }, `Falta aplicar: ${talhoes.map(t => `${t} (${porTalhao[t].sort().join(', ')})`).join(' · ')}`),
     el('span', { class: 'sub' }, `Prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''} · ${r.id}`),
-    el('button', { type: 'button', class: 'btn sec', style: 'margin-top:8px', onclick: () => { painel.hidden = !painel.hidden; } }, 'Cancelar…'),
+    r.editada ? el('details', { style: 'margin-top:6px' }, el('summary', {}, `Editada em ${r.editada.em} por ${r.editada.por}`), el('div', { class: 'sub' }, r.editada.mudancas.map(m => el('div', {}, '• ' + m)))) : null,
+    r.edicaoPendente ? el('span', { class: 'sub', style: 'display:block;margin-top:6px' }, 'Edição guardada: a receita aparece atualizada quando o envio terminar.') : null,
+    el('div', { class: 'duplo', style: 'margin-top:8px' },
+      el('button', { type: 'button', class: 'btn', disabled: r.edicaoPendente ? true : null, onclick: () => abrirEdicaoReceita(r) }, 'Editar receita'),
+      el('button', { type: 'button', class: 'btn sec', onclick: () => { painel.hidden = !painel.hidden; } }, 'Cancelar…')),
     painel);
+}
+
+
+// ---- o técnico edita uma receita em aberto: o mesmo formulário da Visita técnica, já preenchido ----
+function iniReceita(r) {
+  const talhoes = {}; r.talhoes.forEach(t => { talhoes[t.talhao] = { avaliacao: t.avaliacao, fase: t.fase, previsao: t.previsao }; });
+  const areas = {}; r.areas.forEach(a => { areas[a] = true; });
+  return { datahora: String(r.dataHora).slice(0, 16), talhoes, aplicacao: r.aplicacao, tipo: r.tipo, areas, justificativa: r.justificativa, metodo: r.metodo,
+    volume: r.volume, ph: r.ph, vazao: r.vazao, reentrada: r.reentrada, carencia: r.carencia,
+    produtos: (r.produtos || []).map(p => ({ id: p.id, concentracao: p.concentracao, dosagem: p.dose, dosePlanta: p.dosePlanta, unidade: p.unidade })),
+    prioridade: r.prioridade, dataProgramada: r.prioridade === 'PROGRAMADO' ? String(r.prazo).slice(0, 10) : '' };
+}
+function moduloEditarReceita(r) {
+  const base = MODULOS.find(m => m.id === 'receita'), aplicados = r.aplicados || [];
+  const rotuloAp = a => a.replace('|', ', área ');
+  const aviso = { t: 'info', show: () => `Editando ${r.id}${r.versao ? ` (já foi editada ${r.versao} ${r.versao === 1 ? 'vez' : 'vezes'})` : ''}.\nVocê pode mudar qualquer campo, acrescentar e retirar produtos. A assinatura do agrônomo continua a original, e o aplicador é avisado do que mudou.`
+    + (aplicados.length ? `\n⚠ Já aplicado: ${aplicados.map(rotuloAp).join('; ')}. Esses talhões e áreas não podem sair da receita, e o tipo de aplicação não muda. O que já foi aplicado não é alterado.` : '') };
+  const campos = base.campos.filter(c => c.k !== 'assinatura').map(c => c.t === 'secao' && c.l === 'Prioridade e assinatura' ? { ...c, l: 'Prioridade' } : c);
+  return { ...base, id: 'receita_editar', nome: 'Editar receita', campos: [aviso, ...campos], inicial: iniReceita(r), extraDados: { idReceita: r.id, versao: r.versao || 0 }, rotuloSalvar: 'Salvar alterações da receita',
+    validar: V => {
+      if (!aplicados.length) return null;
+      if (V.aplicacao !== r.aplicacao) return `Esta receita já teve aplicação: o tipo de aplicação (${r.aplicacao}) não pode mudar.`;
+      const fora = aplicados.find(a => { const [t, ar] = a.split('|'); return !(V.talhoes || {})[t] || !(V.areas || {})[ar]; });
+      return fora ? `${rotuloAp(fora)} já foi aplicado: não pode sair da receita.` : null;
+    },
+    aoSalvar: () => { const rec = (S.dados.receitas || []).find(x => x.id === r.id); if (rec) rec.edicaoPendente = true; try { localStorage.setItem('sitio_dados', JSON.stringify(S.dados)); } catch (e) {} } };
+}
+function abrirEdicaoReceita(r) {
+  mostrar('tela-form'); S.tela = 'receita-editar'; $('#form-titulo').textContent = 'Editar receita'; $('#form-ultimos').hidden = true;
+  const root = $('#form-root');
+  montarForm(moduloEditarReceita(r), root, () => { abrirReceitasAbertas(); renderAlertaReceitas(); });
+  root.prepend(el('button', { type: 'button', class: 'link', onclick: abrirReceitasAbertas }, '← Voltar às receitas em aberto'));
 }
 
 // ---- tela do aplicador ----
 function abrirAplicar() {
-  mostrar('tela-form'); S.tela = 'aplicar-lista'; $('#form-titulo').textContent = 'Aplicação (receitas)'; $('#form-ultimos').hidden = true;
+  mostrar('tela-form'); S.tela = 'aplicar-lista'; S.receitaAberta = null; $('#form-titulo').textContent = 'Aplicação (receitas)'; $('#form-ultimos').hidden = true;
   marcarReceitasVistas();
   const root = $('#form-root'); root.replaceChildren();
   const lista = receitasOrdenadas();
@@ -1717,13 +1783,14 @@ function abrirAplicar() {
       el('span', { class: 'prio' }, rotuloPrio(r.prioridade)),
       el('strong', {}, `${r.aplicacao}${r.tipo ? ' · ' + r.tipo : ''}`),
       el('span', { class: 'sub' }, `Talhão ${talh} · prazo ${fmtData(r.prazo)}${atrasada(r) ? ' (atrasada)' : ''}`),
+      r.editada ? el('span', { class: 'chip chip-falta', style: 'align-self:flex-start;margin:4px 0' }, 'Editada pelo técnico') : null,
       el('span', { class: 'sub' }, r.id)));
   });
 }
 function abrirReceita(r) {
   if (r.aplicacao !== 'MANEJO OPERACIONAL' && lavagensDoUsuario().length) return mostrarBloqueioLavagem(lavagensDoUsuario()[0]);   // lavar a roupa antes de nova aplicação
   mostrar('tela-form'); S.tela = 'aplicar-receita'; $('#form-ultimos').hidden = true;
-  marcaVista(r.id);
+  marcaVista(chaveVista(r)); S.receitaAberta = { id: r.id, versao: r.versao || 0 };
   const root = $('#form-root'); $('#form-titulo').textContent = r.id;
   montarForm(moduloAplicar(r), root, () => irMenu());
   root.prepend(el('button', { type: 'button', class: 'link', onclick: abrirAplicar }, '← Voltar às receitas'));
@@ -1750,6 +1817,7 @@ function resumoReceita(r) {
     `Justificativa: ${r.justificativa}`, `Método: ${r.metodo}${r.volume ? ' · calda ' + r.volume : ''}${r.ph ? ' · pH ' + r.ph : ''}${r.vazao ? ' · vazão ' + r.vazao + (/^n/i.test(r.vazao) ? '' : ' L/ha') : ''}`];
   if (r.carencia) linhas.push(`Carência: ${r.carencia} · Reentrada: ${r.reentrada || '24 Horas'}`);
   if (r.aplicacao === 'MANEJO OPERACIONAL' && r.dataRealizacao) linhas.push(`Realizar em: ${fmtData(r.dataRealizacao)} ${String(r.dataRealizacao).slice(11, 16)}`);
+  if (r.editada) linhas.unshift(`⚠ RECEITA EDITADA em ${r.editada.em} por ${r.editada.por}. O que mudou:\n${r.editada.mudancas.map(x => '• ' + x).join('\n')}\n`);
   const vistos = new Set();
   r.talhoes.forEach(t => { if (r.pendentes.some(p => p.talhao === t.talhao) && !vistos.has(t.talhao)) { vistos.add(t.talhao); linhas.push(`${t.talhao}: ${t.avaliacao}${t.fase ? ' (' + t.fase + ')' : ''}`); } });
   return linhas.join('\n');
@@ -1763,6 +1831,7 @@ function moduloAplicar(r) {
   const areasDe = t => r.pendentes.filter(p => p.talhao === t).map(p => p.area);
   const campos = [
     { k: 'idReceita', t: 'text', l: 'Receita', def: r.id, ro: true, showIf: () => false },
+    { k: 'versaoReceita', t: 'text', l: 'Versão da receita', def: String(r.versao || 0), ro: true, showIf: () => false },   // o servidor só aceita a aplicação da versão que o aplicador abriu
     { k: 'tipoAplicacao', t: 'text', l: 'Aplicação', def: r.aplicacao, ro: true, showIf: () => false },
     { t: 'secao', l: r.id },
     { t: 'info', show: () => resumoReceita(r) }
@@ -1801,7 +1870,8 @@ function moduloAplicar(r) {
     { k: 'assinatura', t: 'assinatura', l: 'Assinatura do aplicador' });
   return { id: 'aplicacao_execucao', nome: 'Aplicação ' + r.id, campos,
     // quem tem lavagem da roupa pendente não lança outra aplicação
-    validar: V => { if (manejo) return null; const p = lavagensDe(V.aplicador); return p.length ? `${V.aplicador.split(' ')[0]} tem lavagem da roupa pendente (${rotuloLavagem(p[0])}). Lance a lavagem no Hidrorrepelente antes de uma nova aplicação.` : null; },
+    validar: V => { const atual = (S.dados.receitas || []).find(x => x.id === r.id); if (atual && (atual.versao || 0) !== (r.versao || 0)) return 'O técnico editou esta receita depois que você a abriu. Volte às receitas e abra de novo.';
+      if (manejo) return null; const p = lavagensDe(V.aplicador); return p.length ? `${V.aplicador.split(' ')[0]} tem lavagem da roupa pendente (${rotuloLavagem(p[0])}). Lance a lavagem no Hidrorrepelente antes de uma nova aplicação.` : null; },
     aoSalvar: (V, idTransacao) => {
       descontarPares(S.dados.receitas, V);
       const l = manejo ? null : lavagemDeEnvio(V, idTransacao);   // a lavagem passa a ser obrigatória
